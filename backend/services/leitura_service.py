@@ -4,14 +4,22 @@ import numpy as np
 import re
 import pytesseract
 import pdfplumber
-from pyzbar.pyzbar import decode as pyzbar_decode
-from pyzxing import BarCodeReader
 from PIL import Image, ImageDraw, ImageFont
 import io
 from pdf2image import convert_from_path
 import contextlib
 from time import sleep
 import logging
+
+try:
+    from pyzbar.pyzbar import decode as pyzbar_decode
+except ImportError:
+    pyzbar_decode = None
+
+try:
+    from pyzxing import BarCodeReader
+except ImportError:
+    BarCodeReader = None
 
 logger = logging.getLogger(__name__)
 
@@ -221,6 +229,9 @@ def decode_opencv(img_bgr):
     return data
 
 def decode_pyzxing(img_path):
+    if BarCodeReader is None:
+        return None
+
     reader = BarCodeReader()
     results = reader.decode(img_path)
     if not results:
@@ -267,11 +278,12 @@ def try_all_techniques(img_path, i):
                 final_bgr = cv2.cvtColor(morphed, cv2.COLOR_GRAY2BGR)
 
                 # 1️⃣ Tenta primeiro com Pyzbar
-                results_pyzbar = pyzbar_decode(Image.fromarray(morphed))
-                if results_pyzbar:
-                    print(f"[pyzbar] ✅ angle={angle}, thresh={thresh_val}, morph={morph_op}")
-                    data = results_pyzbar[0].data.decode("utf-8")
-                    tipo = results_pyzbar[0].type
+                if pyzbar_decode is not None:
+                    results_pyzbar = pyzbar_decode(Image.fromarray(morphed))
+                    if results_pyzbar:
+                        print(f"[pyzbar] ✅ angle={angle}, thresh={thresh_val}, morph={morph_op}")
+                        data = results_pyzbar[0].data.decode("utf-8")
+                        tipo = results_pyzbar[0].type
                     return extrair_info_qrcode(data, tipo)
 
                 # 2️⃣ Depois tenta OpenCV
