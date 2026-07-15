@@ -1,0 +1,65 @@
+# 🔹 Arquivos e pastas do ambiente virtual
+venv/
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+*.pdb
+*.so
+
+# 🔹 Arquivos de configuração sensíveis
+.env
+.env.example
+
+# 🔹 Dependências do Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 🔹 Arquivos do WhatsApp Web.js
+whatsapp_web_js
+#whatsapp_web_js/.wwebjs_auth/  - usar pro railway-whatsapp-web-js
+#whatsapp_web_js/.wwebjs_cache/
+
+# 🔹 Arquivos temporários e de cache
+*.log
+*.sqlite
+*.sqlite3
+.DS_Store
+*.swp
+*.swo
+*.swn
+
+# 🔹 Arquivos de build do Streamlit
+.streamlit/
+
+# 🔹 Arquivos do Railway e do Python
+*.db
+instance/
+*.pytest_cache/
+*.coverage
+htmlcov/
+.idea/
+.vscode/
+.mypy_cache/
+
+# Ignorar modelos treinados do spaCy
+nlp_categorizer/model_spacy/
+
+backend/services/teste.py
+
+# Ignora tudo da pasta de treino local
+/nlp_categorizer/
+
+**/teste*.py
+**/test*.py
+
+**/*.jpeg
+**/*.pdf
+**/*.csv
+**/*.png
+
+# Ignora modelos treinados temporários
+#*.bin
+#*.bin.gz
