@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Form
 import os
 import psycopg2
@@ -15,7 +16,7 @@ import fasttext
 from backend.utils import (
     mensagem_ja_processada, registrar_mensagem_recebida, obter_schema_por_telefone, salvar_localizacao_usuario, obter_ultima_localizacao
 )
-from backend.services.scheduler import scheduler, agendar_lembrete_cron
+from backend.services.scheduler import scheduler, agendar_lembrete_cron, carregar_lembretes_salvos
 from backend.services.whatsapp_service import enviar_mensagem_whatsapp, obter_url_midia, baixar_midia, enviar_imagem_whatsapp
 from backend.services.db_init import inicializar_bd
 from backend.services.api_service import (
@@ -61,12 +62,17 @@ logger = logging.getLogger(__name__)
 # Carregar variáveis de ambiente
 load_dotenv()
 
-app = FastAPI()
-
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 API_COTACAO = os.getenv("API_COTACAO")
-inicializar_bd(DATABASE_URL)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    inicializar_bd(DATABASE_URL)
+    carregar_lembretes_salvos()
+    yield
+
+app = FastAPI(lifespan=lifespan)
 
 caminho_modelo = os.path.join("backend", "models", "modelo_gastos_prod.bin")
 MODELO_FASTTEXT = fasttext.load_model(caminho_modelo)

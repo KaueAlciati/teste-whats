@@ -87,5 +87,3 @@ def carregar_lembretes_salvos():
 
     for telefone, mensagem, cron in lembretes:
         agendar_lembrete_cron(telefone, mensagem, cron)
-
-carregar_lembretes_salvos()
