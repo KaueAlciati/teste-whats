@@ -1,6 +1,6 @@
 import logging
-from whatsapp import enviar_mensagem_whatsapp, enviar_lista_interativa
-from chatwoot_integration import transferir_para_vendedor
+from backend.services.whatsapp_service import enviar_mensagem_whatsapp, enviar_lista_interativa
+from backend.services.chatwoot_integration import transferir_para_vendedor
 
 logger = logging.getLogger(__name__)
 

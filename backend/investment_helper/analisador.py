@@ -1,16 +1,16 @@
 # backend/investment_helper/analisador.py
 
-from api_alpha_vantage import buscar_acao_alpha_vantage
-from api_finnhub import buscar_acao_finnhub
-from api_twelve_data import buscar_acao_twelve_data
-from api_coingecko import buscar_top_criptos
-from api_openfigi import buscar_info_figi
-from api_fred import buscar_serie_fred
-from api_brasilapi import buscar_indicadores_brasilapi
-from api_bcb_sgs import buscar_indicadores_bcb
-from api_b3_yfinance import buscar_acao_b3
-from api_fii_yfinance import buscar_fii_yfinance
-from api_fii_fundsexplorer import buscar_info_fii_funds_explorer
+from backend.investment_helper.api_alpha_vantage import buscar_acao_alpha_vantage
+from backend.investment_helper.api_finnhub import buscar_acao_finnhub
+from backend.investment_helper.api_twelve_data import buscar_acao_twelve_data
+from backend.investment_helper.api_coingecko import buscar_top_criptos
+from backend.investment_helper.api_openfigi import buscar_info_figi
+from backend.investment_helper.api_fred import buscar_serie_fred
+from backend.investment_helper.api_brasilapi import buscar_indicadores_brasilapi
+from backend.investment_helper.api_bcb_sgs import buscar_indicadores_bcb
+from backend.investment_helper.api_b3_yfinance import buscar_acao_b3
+from backend.investment_helper.api_fii_yfinance import buscar_fii_yfinance
+from backend.investment_helper.api_fii_fundsexplorer import buscar_info_fii_funds_explorer
 
 
 def resumo_acao(simbolo: str):
