@@ -4,9 +4,15 @@ import httpx
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
+
 WHATSAPP_BOT_URL = os.getenv("WHATSAPP_BOT_URL")
-TOKEN = os.getenv("TOKEN")
-PHONE_ID = os.getenv("PHONE_ID")
+TOKEN = os.getenv("WHATSAPP_TOKEN")
+PHONE_ID = os.getenv("PHONE_NUMBER_ID")
+
+logger.info(f"PHONE_ID: {PHONE_ID}")
+logger.info(f"TOKEN carregado: {'SIM' if TOKEN else 'NÃO'}")
 
 logger = logging.getLogger(__name__)
 
