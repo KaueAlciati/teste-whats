@@ -41,7 +41,11 @@ from backend.services.email_service import (
 )
 from backend.services.maps_service import calcular_rota
 from backend.services.chatwoot_integration import transferir_para_vendedor
-from backend.services.bot_grafica import processar_mensagem_bot, verificar_handoff
+from backend.services.bot_grafica import (
+    processar_mensagem_bot,
+    verificar_handoff,
+    sessoes
+)
 
 # Configuração básica de logging
 LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "logs")
@@ -155,6 +159,55 @@ async def receber_mensagem(request: Request):
 
             logger.info("📩 Mensagem recebida: '%s' de %s", mensagem, telefone)
 
+            PALAVRAS_GRAFICA = [
+                "oi",
+                "olá",
+                "ola",
+                "gráfica",
+                "grafica",
+                "atendimento",
+                "orçamento",
+                "orcamento",
+                "adesivo",
+                "adesivos",
+                "banner",
+                "banners",
+                "lona",
+                "fachada",
+                "placa",
+                "placas",
+                "cartão",
+                "cartao",
+                "panfleto",
+                "panfletos",
+                "flyer",
+                "flyers",
+                "impressão",
+                "impressao",
+                "recorte",
+                "plotagem",
+                "envelopamento",
+                "comunicação visual",
+                "comunicacao visual"
+            ]
+
+            if telefone in sessoes or any(
+                palavra in mensagem_lower
+                for palavra in PALAVRAS_GRAFICA
+            ):
+                logger.info("🎨 Mensagem encaminhada para o bot da gráfica: %s", telefone)
+
+                await processar_mensagem_bot(
+                    telefone,
+                    mensagem,
+                    tipo_msg
+                )
+
+                return {
+                    "status": "OK",
+                    "resposta": "Mensagem processada pelo bot da gráfica"
+                }
+
             if not verificar_autorizacao(telefone):
                 logger.warning("🔒 Número não autorizado: %s", telefone)
 
@@ -193,19 +246,6 @@ async def receber_mensagem(request: Request):
                 log_tempos(inicio, timestamp_whatsapp, logger, mensagem, telefone)
                 return {"status": "OK", "resposta": resposta}
             
-            elif mensagem_lower in ["atendimento", "gráfica", "orçamento gráfica"]:
-                """
-                Inicia o bot de atendimento da gráfica
-                """
-                await processar_mensagem_bot(telefone, mensagem, "text")
-                return {"status": "OK", "resposta": "Bot de gráfica ativado"}
-
-            # Se a mensagem não corresponder a nenhum comando conhecido,
-            # verifica se está em sessão ativa do bot de gráfica
-            elif telefone in sessoes:  # sessoes é importado de bot_grafica
-                await processar_mensagem_bot(telefone, mensagem, "text")
-                return {"status": "OK", "resposta": "Processado pelo bot de gráfica"}
-
             elif mensagem_lower == "fatura paga!":
                 pagar_fatura(schema)
                 resposta = "✅ Todas as compras parceladas deste mês foram adicionadas ao total de gastos!"
