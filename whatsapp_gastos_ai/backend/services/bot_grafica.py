@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from backend.core.models import AgentResponse, IncomingMessage
@@ -33,12 +34,13 @@ async def marcar_handoff(telefone: str, canal: str = "whatsapp"):
 def _eh_fluxo_grafica(texto: str, sessao: dict[str, Any]) -> bool:
     texto = (texto or "").strip().lower()
     etapa = sessao.get("etapa", "inicio")
-    return etapa != "inicio" or texto in {"atendimento", "gráfica", "grafica", "orçamento gráfica", "orcamento grafica"}
+    palavras = {"atendimento", "gráfica", "grafica", "orçamento gráfica", "orcamento grafica", "orcamento", "adesivo", "banner", "placa", "fachada", "impressao", "cartao", "panfleto", "flyer"}
+    return etapa != "inicio" or texto in palavras or any(palavra in texto for palavra in palavras)
 
 
 def _resposta_opcoes() -> AgentResponse:
     return AgentResponse(
-        text="Olá! 👋 Bem-vindo à Gráfica XP\nQual produto você precisa?",
+        text="Claro. Qual produto você precisa orçar?",
         response_type="options",
         options=[
             {"id": "cartao", "label": "Cartão de visita", "description": "500un a partir de R$50"},
@@ -51,6 +53,23 @@ def _resposta_opcoes() -> AgentResponse:
     )
 
 
+def _identificar_produto(texto: str) -> str | None:
+    texto = (texto or "").lower()
+    produtos = {
+        "adesivo": ["adesivo", "adesivos"],
+        "banner": ["banner", "banners"],
+        "placa": ["placa", "placas"],
+        "fachada": ["fachada", "fachadas"],
+        "cartao": ["cartao", "cartão", "cartao de visita", "cartão de visita"],
+        "panfleto": ["panfleto", "flyer", "folheto"],
+        "outro": ["outro", "outra coisa"],
+    }
+    for produto, chaves in produtos.items():
+        if any(chave in texto for chave in chaves):
+            return produto
+    return None
+
+
 async def _processar_fluxo_grafica(telefone: str, mensagem: str, tipo_mensagem: str = "text", canal: str = "whatsapp") -> AgentResponse:
     sessao = _session_state(canal, telefone)
     etapa = sessao.get("etapa", "inicio")
@@ -61,12 +80,19 @@ async def _processar_fluxo_grafica(telefone: str, mensagem: str, tipo_mensagem: 
         return AgentResponse(text="⏭️ Conversa em atendimento humano.", transfer_to_human=True)
 
     if etapa == "inicio":
-        sessao["etapa"] = "aguardando_produto"
+        produto = _identificar_produto(texto_lower)
         sessao.setdefault("dados", {})
+        if produto and produto != "outro":
+            sessao["dados"]["produto"] = produto
+            sessao["etapa"] = "aguardando_medida"
+            nome = texto_upper(produto)
+            return AgentResponse(text=f"Certo. Qual seria a medida aproximada do {nome}?")
+        sessao["etapa"] = "aguardando_produto"
         return _resposta_opcoes()
 
     if etapa == "aguardando_produto":
-        if texto_lower == "outro":
+        produto = _identificar_produto(texto_lower)
+        if texto_lower == "outro" or produto == "outro":
             sessao["handoff"] = True
             dados = sessao.get("dados", {})
             dados["produto"] = "outro"
@@ -77,9 +103,16 @@ async def _processar_fluxo_grafica(telefone: str, mensagem: str, tipo_mensagem: 
                 metadata={"produto": "outro"},
             )
 
+        if produto:
+            texto_lower = produto
         sessao.setdefault("dados", {})["produto"] = texto_lower
+        sessao["etapa"] = "aguardando_medida"
+        return AgentResponse(text=f"Perfeito. Qual seria a medida aproximada do {texto_upper(texto_lower)}?")
+
+    if etapa == "aguardando_medida":
+        sessao.setdefault("dados", {})["medida"] = texto
         sessao["etapa"] = "aguardando_quantidade"
-        return AgentResponse(text=f"Ótimo! Você escolheu: {texto_upper(texto_lower)}\n\nQuantas unidades você precisa?")
+        return AgentResponse(text=f"Entendi. E quantas unidades você precisa?")
 
     if etapa == "aguardando_quantidade":
         try:

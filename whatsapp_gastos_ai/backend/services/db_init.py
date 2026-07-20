@@ -74,6 +74,21 @@ def inicializar_bd(database_url: str | None = None):
         )
     """)
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS conversation_messages (
+            id SERIAL PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            direction TEXT NOT NULL CHECK (direction IN ('user', 'assistant')),
+            message_type TEXT NOT NULL DEFAULT 'text',
+            content TEXT NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_conversation_messages_user_channel_created_at
+        ON conversation_messages (user_id, channel, created_at DESC)
+    """)
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS usuarios (
             id SERIAL PRIMARY KEY,
             nome TEXT,

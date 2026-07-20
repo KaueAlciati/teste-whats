@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import os
 import secrets
-
-import pytz
 
 from backend.services.db_init import conectar_bd
 
 
 def gerar_token_acesso(telefone: str) -> dict:
-    fuso_brasilia = pytz.timezone("America/Sao_Paulo")
+    fuso_brasilia = timezone(timedelta(hours=-3))
     agora = datetime.now(fuso_brasilia)
     expira_em = agora + timedelta(minutes=30)
     token = secrets.token_urlsafe(16)

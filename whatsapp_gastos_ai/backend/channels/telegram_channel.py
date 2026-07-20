@@ -10,6 +10,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 from backend.core.agent import process_agent_message
 from backend.core.models import IncomingMessage
 from backend.core.sessions import session_store
+from backend.services.conversation_service import limpar_historico_conversa
 
 logger = logging.getLogger(__name__)
 
@@ -57,11 +58,15 @@ class TelegramChannelRuntime:
     async def _start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = str(update.effective_user.id)
         session_store.get("telegram", user_id)
-        await update.message.reply_text("Bot iniciado. Envie uma mensagem para testar o agente.")
+        await update.message.reply_text(
+            "Oi! Eu sou o assistente virtual da Fincontrol. Posso ajudar com controle financeiro, consultas e atendimento da gráfica. Pode falar comigo normalmente ou digitar 'ajuda' para ver os recursos disponíveis."
+        )
 
     async def _reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = str(update.effective_user.id)
         session_store.reset("telegram", user_id)
+        session_store.clear_history("telegram", user_id)
+        limpar_historico_conversa(f"telegram:{user_id}", "telegram")
         await update.message.reply_text("Sessão resetada.")
         logger.info("Sessão resetada para telegram:%s", user_id)
 
