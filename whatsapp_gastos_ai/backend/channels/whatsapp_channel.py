@@ -79,7 +79,7 @@ async def send_agent_response_whatsapp(user_id: str, response: AgentResponse) ->
         return
 
     if response.document_path:
-        await enviar_mensagem_whatsapp(user_id, response.text or "Documento gerado.")
+        await enviar_mensagem_whatsapp(user_id, response.text or f"Documento gerado: {response.document_name or 'relatorio.pdf'}")
         return
 
     await enviar_mensagem_whatsapp(user_id, response.text or "")

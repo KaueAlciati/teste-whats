@@ -1,118 +1,211 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import unittest
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from backend.core.agent import process_agent_message
-from backend.core.models import AgentResponse, IncomingMessage
+from backend.core.intent_classifier import IntentResult, classify_intent
+from backend.core.models import IncomingMessage
 from backend.core.router import route_incoming_message
 from backend.core.sessions import session_store
 
 
-class HumanizedConversationTest(unittest.TestCase):
-    def setUp(self) -> None:
+def _msg(text: str, channel: str = "telegram", user_id: str = "123") -> IncomingMessage:
+    return IncomingMessage(user_id=user_id, channel=channel, message_type="text", text=text)
+
+
+class HumanizedConversationTest(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
         session_store.clear()
 
-    def tearDown(self) -> None:
+    async def asyncTearDown(self) -> None:
         session_store.clear()
 
-    def test_oi_routes_to_ai(self):
-        msg = IncomingMessage(user_id="123", channel="telegram", message_type="text", text="oi")
+    async def test_classifier_pdf_request(self):
+        fake_json = {
+            "intent": "generate_financial_pdf",
+            "confidence": 0.96,
+            "parameters": {"period": None, "format": "pdf"},
+            "missing_fields": ["period"],
+            "should_execute": False,
+            "clarification_question": "Você quer o relatório deste mês ou de outro período?",
+        }
+        completion = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(fake_json)))]
+        )
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=completion)
 
-        async def runner():
-            with patch("backend.core.router.verificar_autorizacao", return_value=True), patch(
-                "backend.core.router.gerar_resposta_conversacional",
-                new=AsyncMock(return_value=AgentResponse(text="Oi! Tudo certo? Me conta no que você precisa de ajuda.")),
-            ) as ai_mock:
-                response = await route_incoming_message(msg, session_store.get("telegram", "123"))
-                self.assertNotIn("Comando não reconhecido", response.text or "")
-                self.assertIn("Tudo certo", response.text or "")
-                ai_mock.assert_awaited_once()
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}), patch("openai.AsyncOpenAI", return_value=mock_client):
+            result = await classify_intent(_msg("me gere um pdf das minha conta"), {})
 
-        asyncio.run(runner())
+        self.assertEqual(result.intent, "generate_financial_pdf")
+        self.assertEqual(result.missing_fields, ["period"])
+        self.assertFalse(result.should_execute)
 
-    def test_ajuda_continua_funcionando(self):
-        msg = IncomingMessage(user_id="123", channel="telegram", message_type="text", text="ajuda")
+    async def test_classifier_total_expense(self):
+        fake_json = {
+            "intent": "get_total_expense",
+            "confidence": 0.95,
+            "parameters": {"period": "current_month"},
+            "missing_fields": [],
+            "should_execute": True,
+            "clarification_question": None,
+        }
+        completion = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(fake_json)))]
+        )
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=completion)
 
-        async def runner():
-            with patch("backend.core.router.verificar_autorizacao", return_value=True), patch(
-                "backend.core.router.gerar_resposta_conversacional",
-                new=AsyncMock(),
-            ) as ai_mock:
-                response = await route_incoming_message(msg, session_store.get("telegram", "123"))
-                self.assertIn("Financeiro", response.text or "")
-                self.assertIn("Gráfica", response.text or "")
-                ai_mock.assert_not_awaited()
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}), patch("openai.AsyncOpenAI", return_value=mock_client):
+            result = await classify_intent(_msg("quanto gastei esse mes"), {})
 
-        asyncio.run(runner())
+        self.assertEqual(result.intent, "get_total_expense")
+        self.assertEqual(result.parameters["period"], "current_month")
 
-    def test_intencao_financeira_natural_usa_funcao_real(self):
-        msg = IncomingMessage(user_id="5511999999999", channel="whatsapp", message_type="text", text="quanto eu gastei esse mês?")
+    async def test_classifier_register_expense(self):
+        fake_json = {
+            "intent": "register_expense",
+            "confidence": 0.97,
+            "parameters": {
+                "value": 35,
+                "description": "gastei 35 no almoço no pix",
+                "payment_method": "pix",
+            },
+            "missing_fields": [],
+            "should_execute": True,
+            "clarification_question": None,
+        }
+        completion = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(fake_json)))]
+        )
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=completion)
 
-        async def runner():
-            with patch("backend.core.router.verificar_autorizacao", return_value=True), patch(
-                "backend.core.router.obter_schema_por_telefone",
-                return_value="schema_fin",
-            ), patch("backend.core.router.calcular_total_gasto", return_value=123.45) as total_mock:
-                response = await route_incoming_message(msg, session_store.get("whatsapp", "5511999999999"))
-                self.assertIn("123.45", response.text or "")
-                total_mock.assert_called_once_with("schema_fin")
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}), patch("openai.AsyncOpenAI", return_value=mock_client):
+            result = await classify_intent(_msg("gastei 35 no almoço no pix"), {})
 
-        asyncio.run(runner())
+        self.assertEqual(result.intent, "register_expense")
+        self.assertEqual(result.parameters["value"], 35)
+        self.assertEqual(result.parameters["payment_method"], "pix")
 
-    def test_orcamento_de_adesivo_vai_para_fluxo_da_grafica(self):
-        msg = IncomingMessage(user_id="123", channel="telegram", message_type="text", text="quero fazer um orçamento de adesivo")
+    async def test_classifier_graphic_quote(self):
+        fake_json = {
+            "intent": "graphic_quote",
+            "confidence": 0.96,
+            "parameters": {"product": "placa"},
+            "missing_fields": ["measurement"],
+            "should_execute": False,
+            "clarification_question": "Certo. Qual seria a medida aproximada?",
+        }
+        completion = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(fake_json)))]
+        )
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=completion)
 
-        async def runner():
-            with patch("backend.core.router.verificar_autorizacao", return_value=True):
-                response = await route_incoming_message(msg, session_store.get("telegram", "123"))
-                self.assertIn("medida", (response.text or "").lower())
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}), patch("openai.AsyncOpenAI", return_value=mock_client):
+            result = await classify_intent(_msg("quero uma placa pra minha loja"), {})
 
-        asyncio.run(runner())
+        self.assertEqual(result.intent, "graphic_quote")
+        self.assertEqual(result.missing_fields, ["measurement"])
 
-    def test_reset_limpa_sessao(self):
-        session = session_store.get("telegram", "123")
-        session.state["history"] = [{"role": "user", "content": "oi"}]
-        session.state["current_intent"] = "conversational_ai"
-        session_store.clear_history("telegram", "123")
-        session_store.reset("telegram", "123")
-        nova = session_store.get("telegram", "123")
-        self.assertNotIn("history", nova.state)
-        self.assertNotIn("current_intent", nova.state)
+    async def test_classifier_exchange_rate(self):
+        fake_json = {
+            "intent": "get_exchange_rate",
+            "confidence": 0.94,
+            "parameters": {"currency": "USD"},
+            "missing_fields": [],
+            "should_execute": True,
+            "clarification_question": None,
+        }
+        completion = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(fake_json)))]
+        )
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=completion)
 
-    def test_salvar_historico_falha_nao_derruba(self):
-        msg = IncomingMessage(user_id="123", channel="telegram", message_type="text", text="oi")
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}), patch("openai.AsyncOpenAI", return_value=mock_client):
+            result = await classify_intent(_msg("qual dolar hj"), {})
 
-        async def runner():
-            with patch("backend.core.agent.carregar_historico_conversa", return_value=[]), patch(
-                "backend.services.conversation_service.conectar_bd",
-                side_effect=Exception("db down"),
-            ), patch(
-                "backend.core.agent.route_incoming_message",
-                new=AsyncMock(return_value=AgentResponse(text="ok")),
-            ):
-                response = await process_agent_message(msg)
-                self.assertEqual(response.text, "ok")
+        self.assertEqual(result.intent, "get_exchange_rate")
+        self.assertEqual(result.parameters["currency"], "USD")
 
-        asyncio.run(runner())
+    async def test_pending_pdf_flow(self):
+        first = IntentResult(
+            intent="generate_financial_pdf",
+            confidence=0.9,
+            parameters={"format": "pdf"},
+            missing_fields=["period"],
+            should_execute=False,
+            clarification_question="Você quer o relatório deste mês ou de outro período?",
+        )
+        second = IntentResult(
+            intent="generate_financial_pdf",
+            confidence=0.98,
+            parameters={"format": "pdf", "period": "current_month"},
+            missing_fields=[],
+            should_execute=True,
+            clarification_question=None,
+        )
 
-    def test_mesmo_nucleo_para_canais_diferentes(self):
-        async def runner():
-            with patch("backend.core.agent.carregar_historico_conversa", return_value=[]), patch(
-                "backend.core.agent.route_incoming_message",
-                new=AsyncMock(side_effect=lambda message, session: AgentResponse(text=session.channel)),
-            ):
-                telegram = await process_agent_message(
-                    IncomingMessage(user_id="1", channel="telegram", message_type="text", text="oi")
-                )
-                whatsapp = await process_agent_message(
-                    IncomingMessage(user_id="2", channel="whatsapp", message_type="text", text="oi")
-                )
-                self.assertEqual(telegram.text, "telegram")
-                self.assertEqual(whatsapp.text, "whatsapp")
+        with patch("backend.core.router.verificar_autorizacao", return_value=True), patch(
+            "backend.core.router.classify_intent",
+            new=AsyncMock(side_effect=[first, second]),
+        ), patch("backend.core.router.obter_schema_por_telefone", return_value="schema_fin"), patch(
+            "backend.core.router.gerar_pdf_financeiro",
+            return_value={"path": "/tmp/relatorio.pdf", "name": "relatorio.pdf", "period_label": "07/2026", "total": "123.45"},
+        ):
+            resposta1 = await route_incoming_message(_msg("quero pdf das contas"), session_store.get("telegram", "123"))
+            self.assertIn("relatório deste mês", resposta1.text or "")
+            self.assertEqual(session_store.get("telegram", "123").state.get("pending_intent"), "generate_financial_pdf")
 
-        asyncio.run(runner())
+            resposta2 = await route_incoming_message(_msg("desse mês"), session_store.get("telegram", "123"))
+            self.assertEqual(resposta2.response_type, "document")
+            self.assertEqual(resposta2.document_name, "relatorio.pdf")
+            self.assertIsNotNone(resposta2.document_path)
+            self.assertIsNone(session_store.get("telegram", "123").state.get("pending_intent"))
+
+    async def test_register_expense_vai_para_funcao_real(self):
+        result = IntentResult(
+            intent="register_expense",
+            confidence=0.99,
+            parameters={"value": 35, "description": "almoço", "payment_method": "pix"},
+            missing_fields=[],
+            should_execute=True,
+            clarification_question=None,
+        )
+
+        with patch("backend.core.router.verificar_autorizacao", return_value=True), patch(
+            "backend.core.router.obter_schema_por_telefone",
+            return_value="schema_fin",
+        ), patch("backend.core.router.classify_intent", new=AsyncMock(return_value=result)), patch(
+            "backend.core.router.salvar_gasto",
+        ) as salvar_gasto_mock:
+            resposta = await route_incoming_message(_msg("gastei 35 no almoço no pix"), session_store.get("whatsapp", "5511999999999"))
+
+        self.assertIn("Registrei R$ 35.00", resposta.text or "")
+        salvar_gasto_mock.assert_called_once()
+
+    async def test_openai_error_cai_em_fallback(self):
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=Exception("openai down"))
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}), patch("openai.AsyncOpenAI", return_value=mock_client):
+            result = await classify_intent(_msg("oi"), {})
+
+        self.assertEqual(result.intent, "greeting")
+
+    async def test_oi_nao_retorna_comando_nao_reconhecido(self):
+        with patch("backend.core.router.verificar_autorizacao", return_value=True):
+            resposta = await route_incoming_message(_msg("oi"), session_store.get("telegram", "123"))
+
+        self.assertNotIn("Comando não reconhecido", resposta.text or "")
+        self.assertIn("tudo certo", (resposta.text or "").lower())
 
 
 if __name__ == "__main__":

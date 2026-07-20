@@ -24,6 +24,7 @@ class AgentResponse:
     options: Optional[list[dict[str, Any]]] = None
     image_path: Optional[str] = None
     document_path: Optional[str] = None
+    document_name: Optional[str] = None
     transfer_to_human: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 

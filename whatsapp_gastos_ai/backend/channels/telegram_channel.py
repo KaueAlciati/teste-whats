@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import Optional
 
 from telegram import Update
@@ -82,4 +83,22 @@ class TelegramChannelRuntime:
         )
         logger.info("Mensagem texto recebida no Telegram: telegram:%s", user_id)
         response = await process_agent_message(message)
+        if response.response_type == "document" and response.document_path:
+            document_path = Path(response.document_path)
+            try:
+                with document_path.open("rb") as document:
+                    await update.message.reply_document(
+                        document=document,
+                        filename=response.document_name or document_path.name,
+                        caption=response.text or None,
+                    )
+            except Exception:
+                logger.exception("Erro ao enviar documento no Telegram: telegram:%s", user_id)
+                await update.message.reply_text(response.text or "Não consegui enviar o documento agora.")
+            finally:
+                try:
+                    document_path.unlink(missing_ok=True)
+                except Exception:
+                    logger.exception("Falha ao remover PDF temporário: %s", document_path)
+            return
         await update.message.reply_text(response.text or "")

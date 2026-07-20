@@ -7,7 +7,8 @@ import unicodedata
 from typing import Any
 
 from backend.core.models import AgentResponse, IncomingMessage
-from backend.core.sessions import SessionData
+from backend.core.sessions import SessionData, session_store
+from backend.core.intent_classifier import IntentResult, classify_intent
 from backend.services.api_service import (
     CONVERSOES,
     MOEDAS,
@@ -25,6 +26,7 @@ from backend.services.conversational_ai import gerar_resposta_conversacional
 from backend.services.gastos_service import apagar_lembrete, calcular_total_gasto, listar_lembretes, pagar_fatura, registrar_salario, salvar_gasto
 from backend.services.maps_service import calcular_rota
 from backend.services.noticias_service import obter_boletim_the_news
+from backend.services.report_service import gerar_pdf_financeiro
 from backend.services.scheduler import agendar_lembrete_cron
 from backend.services.token_service import gerar_token_acesso
 from backend.services.email_service import buscar_credenciais_email, formatar_emails_para_whatsapp, get_emails_info, listar_emails_cadastrados, salvar_credenciais_email
@@ -340,10 +342,290 @@ async def _responder_rota(texto: str) -> AgentResponse:
     return AgentResponse(text=str(resultado_rota), metadata={"intent": "rotas"})
 
 
+def _comando_exato(texto_normalizado: str) -> str | None:
+    if texto_normalizado in {"ajuda", "menu", "comandos"}:
+        return "help"
+    if texto_normalizado == "total gasto":
+        return "get_total_expense"
+    if texto_normalizado in {"fatura paga", "fatura paga!"}:
+        return "fatura_paga"
+    if texto_normalizado in {"gráficos", "graficos"}:
+        return "graficos"
+    if texto_normalizado in {"cotação", "cotacao"}:
+        return "get_exchange_rate"
+    if texto_normalizado == "listar moedas":
+        return "listar_moedas"
+    if texto_normalizado == "listar conversoes":
+        return "listar_conversoes"
+    if texto_normalizado.startswith("cep "):
+        return "lookup_zipcode"
+    if texto_normalizado.startswith("conversoes "):
+        return "listar_conversoes_moeda"
+    if texto_normalizado.startswith("lista lembretes"):
+        return "list_reminders"
+    if texto_normalizado.startswith("apagar lembrete"):
+        return "delete_reminder"
+    if texto_normalizado.startswith("noticias") or texto_normalizado.startswith("notícias"):
+        return "get_news"
+    if texto_normalizado.startswith("email") or texto_normalizado.startswith("e-mails") or texto_normalizado.startswith("emails"):
+        return "get_email_summary"
+    if texto_normalizado.startswith("rota ") or texto_normalizado.startswith("rotas "):
+        return "get_route"
+    if texto_normalizado.startswith("salario ") or texto_normalizado.startswith("salário "):
+        return "register_salary"
+    return None
+
+
+def _categoria_gasto(texto: str) -> str:
+    texto = _normalizar_texto(texto)
+    if any(palavra in texto for palavra in {"almoco", "almoço", "jantar", "cafe", "lanche", "mercado", "supermercado"}):
+        return "alimentacao"
+    if any(palavra in texto for palavra in {"uber", "taxi", "transporte", "combustivel", "gasolina"}):
+        return "transporte"
+    if any(palavra in texto for palavra in {"internet", "celular", "assinatura", "streaming"}):
+        return "servicos"
+    return "geral"
+
+
+def _converter_periodo_para_cron(periodo: str | None, horario: str | None) -> str | None:
+    if not periodo or not horario:
+        return None
+    if periodo == "tomorrow":
+        from datetime import datetime, timedelta
+
+        amanha = datetime.now().date() + timedelta(days=1)
+        hora_minuto = horario.strip().replace("h", ":")
+        partes = hora_minuto.split(":")
+        hora = int(partes[0])
+        minuto = int(partes[1]) if len(partes) > 1 and partes[1] else 0
+        return f"{minuto} {hora} {amanha.day} {amanha.month} *"
+    return None
+
+
+async def _responder_intencao_classificada(message: IncomingMessage, session: SessionData, resultado: IntentResult) -> AgentResponse:
+    telefone = message.user_id
+    texto_original = (message.text or "").strip()
+    params = dict(session.state.get("collected_parameters") or {})
+    params.update(resultado.parameters or {})
+
+    if resultado.intent in {"greeting", "general_conversation"}:
+        session_store.clear_pending_intent(message.channel, telefone)
+        session.state["current_intent"] = resultado.intent
+        if resultado.intent == "greeting":
+            return AgentResponse(text="Oi! Tudo certo? Me conta no que você precisa de ajuda.", metadata={"intent": "greeting"})
+        resposta = await gerar_resposta_conversacional(message, session.state)
+        resposta.metadata.setdefault("intent", "general_conversation")
+        return resposta
+
+    if resultado.intent == "help":
+        session_store.clear_pending_intent(message.channel, telefone)
+        session.state["current_intent"] = "help"
+        return await _responder_ajuda(telefone)
+
+    if resultado.intent == "human_support":
+        session_store.clear_pending_intent(message.channel, telefone)
+        session.state["current_intent"] = "human_support"
+        return AgentResponse(text="Certo. Vou encaminhar seu pedido para atendimento humano.", transfer_to_human=True, metadata={"intent": "human_support"})
+
+    if resultado.intent == "unknown":
+        session.state["current_intent"] = "unknown"
+        question = resultado.clarification_question or "Você quer ajuda com finanças, gráfica, lembretes, cotação ou relatórios?"
+        return AgentResponse(text=question, metadata={"intent": "unknown"})
+
+    if resultado.intent == "generate_financial_pdf":
+        session.state["current_intent"] = resultado.intent
+        if not resultado.should_execute:
+            session_store.set_pending_intent(
+                message.channel,
+                telefone,
+                "generate_financial_pdf",
+                parameters=params,
+                missing_fields=resultado.missing_fields,
+                clarification_question=resultado.clarification_question,
+            )
+            session.state["collected_parameters"] = params
+            return AgentResponse(text=resultado.clarification_question or "Você quer o relatório deste mês ou de outro período?", metadata={"intent": resultado.intent})
+
+        schema = session.state.get("schema") or obter_schema_por_telefone(telefone)
+        if not schema:
+            return AgentResponse(text="❌ Usuário sem schema vinculado.", metadata={"intent": resultado.intent})
+        session_store.clear_pending_intent(message.channel, telefone)
+        session.state["collected_parameters"] = params
+        periodo = params.get("period")
+        pdf_info = gerar_pdf_financeiro(schema, periodo=periodo)
+        return AgentResponse(
+            text=f"Pronto. Gerei o relatório financeiro de {pdf_info['period_label']}.",
+            response_type="document",
+            document_path=pdf_info["path"],
+            document_name=pdf_info["name"],
+            metadata={"intent": resultado.intent, "period": pdf_info["period_label"], "total": pdf_info["total"]},
+        )
+
+    if resultado.intent == "graphic_product_question":
+        session_store.clear_pending_intent(message.channel, telefone)
+        session.state["current_intent"] = resultado.intent
+        return AgentResponse(text="Posso te ajudar com adesivos, banners, placas, fachadas e outros materiais. Me diga o produto que você quer orçar.", metadata={"intent": resultado.intent})
+
+    if resultado.intent == "graphic_quote":
+        session.state["current_intent"] = resultado.intent
+        session.state["collected_parameters"] = params
+        if not resultado.should_execute:
+            missing = resultado.missing_fields or []
+            if "measurement" in missing:
+                session.state["etapa"] = "aguardando_medida"
+                session.state.setdefault("dados", {})["produto"] = params.get("product") or "produto"
+            elif "quantity" in missing:
+                session.state["etapa"] = "aguardando_quantidade"
+                session.state.setdefault("dados", {})["produto"] = params.get("product") or session.state.get("dados", {}).get("produto", "produto")
+                if params.get("measurement"):
+                    session.state.setdefault("dados", {})["medida"] = params["measurement"]
+            else:
+                session.state["etapa"] = "aguardando_produto"
+            session_store.set_pending_intent(
+                message.channel,
+                telefone,
+                "graphic_quote",
+                parameters=params,
+                missing_fields=resultado.missing_fields,
+                clarification_question=resultado.clarification_question,
+            )
+            return AgentResponse(
+                text=resultado.clarification_question or "Certo. Me passa a medida para eu continuar.",
+                metadata={"intent": resultado.intent, "pending": True},
+            )
+
+        session_store.clear_pending_intent(message.channel, telefone)
+        if session.state.get("etapa") in {"aguardando_medida", "aguardando_quantidade", "aguardando_prazo", "aguardando_arte"}:
+            resposta_grafica = await gerar_resposta_grafica(telefone, texto_original, "text", canal=message.channel, raw_payload=message.raw_payload)
+            if resposta_grafica.response_type != "text" or resposta_grafica.text != "fluxo_grafica_inativo":
+                return resposta_grafica
+        return AgentResponse(text="Certo. Me conta a medida do material para eu continuar.", metadata={"intent": resultado.intent})
+
+    if resultado.intent in {"register_expense", "register_salary", "get_total_expense", "get_exchange_rate", "lookup_zipcode", "get_route", "get_news", "get_email_summary", "list_reminders", "delete_reminder"}:
+        session_store.clear_pending_intent(message.channel, telefone)
+
+    if resultado.intent == "register_expense":
+        schema = session.state.get("schema") or obter_schema_por_telefone(telefone)
+        if not schema:
+            return AgentResponse(text="❌ Usuário sem schema vinculado.", metadata={"intent": resultado.intent})
+        if not resultado.should_execute:
+            session_store.set_pending_intent(
+                message.channel,
+                telefone,
+                "register_expense",
+                parameters=params,
+                missing_fields=resultado.missing_fields,
+                clarification_question=resultado.clarification_question,
+            )
+            session.state["collected_parameters"] = params
+            return AgentResponse(text=resultado.clarification_question or "Entendi. Quanto foi o gasto?", metadata={"intent": resultado.intent})
+        valor = params.get("value")
+        if valor is None:
+            match = re.search(r"(?:r\$|rs)?\s*(\d+(?:[.,]\d{1,2})?)", texto_original, flags=re.IGNORECASE)
+            valor = float(match.group(1).replace(",", ".")) if match else None
+        if valor is None:
+            return AgentResponse(text="Quanto foi o gasto? Me manda o valor que eu registro.", metadata={"intent": resultado.intent})
+        descricao = params.get("description") or texto_original
+        meio_pagamento = params.get("payment_method") or "não informado"
+        categoria = params.get("category") or _categoria_gasto(descricao)
+        salvar_gasto(descricao, float(valor), categoria, meio_pagamento, schema)
+        session.state["collected_parameters"] = params
+        return AgentResponse(
+            text=f"Anotado. Registrei R$ {float(valor):.2f} em {categoria}.",
+            metadata={"intent": resultado.intent, "valor": float(valor), "categoria": categoria, "meio_pagamento": meio_pagamento},
+        )
+
+    if resultado.intent == "register_salary":
+        schema = session.state.get("schema") or obter_schema_por_telefone(telefone)
+        if not schema:
+            return AgentResponse(text="❌ Usuário sem schema vinculado.", metadata={"intent": resultado.intent})
+        session.state["collected_parameters"] = params
+        return AgentResponse(text=registrar_salario(texto_original, schema), metadata={"intent": resultado.intent})
+
+    if resultado.intent == "get_total_expense":
+        schema = session.state.get("schema") or obter_schema_por_telefone(telefone)
+        if not schema:
+            return AgentResponse(text="❌ Usuário sem schema vinculado.", metadata={"intent": resultado.intent})
+        total = calcular_total_gasto(schema)
+        session.state["collected_parameters"] = params
+        return AgentResponse(text=f"📊 Total gasto no mês: R$ {format(total, ',.2f').replace(',', '.')}", metadata={"intent": resultado.intent, "period": params.get("period", "current_month")})
+
+    if resultado.intent == "get_exchange_rate":
+        session.state["collected_parameters"] = params
+        if params.get("currency") and params["currency"] not in {"USD", "EUR", "GBP", "JPY", "ARS"}:
+            return AgentResponse(text="Qual moeda você quer consultar? Exemplo: dólar, euro ou libra.", metadata={"intent": resultado.intent})
+        if params.get("currency"):
+            return AgentResponse(text=obter_cotacao(os.getenv("API_COTACAO"), MOEDAS, CONVERSOES, params["currency"]), metadata={"intent": resultado.intent})
+        return AgentResponse(text=obter_cotacao_principais(os.getenv("API_COTACAO"), MOEDA_EMOJIS), metadata={"intent": resultado.intent})
+
+    if resultado.intent == "lookup_zipcode":
+        session.state["collected_parameters"] = params
+        match = re.search(r"\b(\d{8})\b", texto_original)
+        if match:
+            return AgentResponse(text=buscar_cep(match.group(1)), metadata={"intent": resultado.intent})
+        return AgentResponse(text="Me manda o CEP com 8 números para eu consultar.", metadata={"intent": resultado.intent})
+
+    if resultado.intent == "get_route":
+        session.state["collected_parameters"] = params
+        return await _responder_rota(texto_original)
+
+    if resultado.intent == "get_news":
+        session.state["collected_parameters"] = params
+        return await _responder_noticias()
+
+    if resultado.intent == "get_email_summary":
+        session.state["collected_parameters"] = params
+        return await _responder_email_compat()
+
+    if resultado.intent == "list_reminders":
+        session.state["collected_parameters"] = params
+        texto_normalizado = _normalizar_texto(texto_original)
+        return await _responder_lembretes(message, session, texto_normalizado)
+
+    if resultado.intent == "delete_reminder":
+        session.state["collected_parameters"] = params
+        texto_normalizado = _normalizar_texto(texto_original)
+        return await _responder_lembretes(message, session, texto_normalizado)
+
+    if resultado.intent == "create_reminder":
+        session.state["collected_parameters"] = params
+        if not resultado.should_execute:
+            session_store.set_pending_intent(
+                message.channel,
+                telefone,
+                "create_reminder",
+                parameters=params,
+                missing_fields=resultado.missing_fields,
+                clarification_question=resultado.clarification_question,
+            )
+            return AgentResponse(text=resultado.clarification_question or "Certo. Me diz o que você quer lembrar.", metadata={"intent": resultado.intent})
+        cron_expr = params.get("cron") or _converter_periodo_para_cron(params.get("date"), params.get("time"))
+        if not cron_expr:
+            session_store.set_pending_intent(
+                message.channel,
+                telefone,
+                "create_reminder",
+                parameters=params,
+                missing_fields=["time"],
+                clarification_question="Qual horário você quer para o lembrete?",
+            )
+            return AgentResponse(text="Qual horário você quer para o lembrete?", metadata={"intent": resultado.intent})
+        mensagem_lembrete = params.get("text") or texto_original
+        agendar_lembrete_cron(telefone, mensagem_lembrete, cron_expr)
+        session_store.clear_pending_intent(message.channel, telefone)
+        return AgentResponse(text=f"⏰ Lembrete agendado com sucesso!\nMensagem: \"{mensagem_lembrete}\"", metadata={"intent": resultado.intent})
+
+    logger.info("Intenção conversacional identificada para %s: %s", telefone, texto_original)
+    resposta = await gerar_resposta_conversacional(message, session.state)
+    resposta.metadata.setdefault("intent", "conversational_ai")
+    return resposta
+
+
 async def _processar_texto_financeiro(message: IncomingMessage, session: SessionData) -> AgentResponse:
     texto_original = (message.text or "").strip()
     texto_normalizado = _normalizar_texto(texto_original)
     telefone = message.user_id
+
     schema = session.state.get("schema") or obter_schema_por_telefone(telefone)
     if schema:
         session.state["schema"] = schema
@@ -361,44 +643,79 @@ async def _processar_texto_financeiro(message: IncomingMessage, session: Session
         if schema:
             session.state["schema"] = schema
 
-    if session.state.get("etapa", "inicio") != "inicio" or _identificar_modo_grafica(texto_normalizado):
+    if session.state.get("etapa", "inicio") != "inicio" or session.state.get("pending_intent") == "graphic_quote":
         resposta_grafica = await gerar_resposta_grafica(telefone, texto_original, "text", canal=message.channel, raw_payload=message.raw_payload)
         if resposta_grafica.response_type != "text" or resposta_grafica.text != "fluxo_grafica_inativo":
-            session.state["current_intent"] = "grafica"
+            session.state["current_intent"] = "graphic_quote"
             return resposta_grafica
 
-    intent = _identificar_intencao_deterministica(texto_original, texto_normalizado)
-    session.state["current_intent"] = intent or "conversational_ai"
-
-    if intent == "ajuda":
+    comando_exato = _comando_exato(texto_normalizado)
+    if comando_exato == "help":
+        session.state["current_intent"] = "help"
+        session_store.clear_pending_intent(message.channel, telefone)
         return await _responder_ajuda(telefone)
-    if intent == "total_gasto":
+    if comando_exato == "get_total_expense":
+        session.state["current_intent"] = "get_total_expense"
+        session_store.clear_pending_intent(message.channel, telefone)
         return await _responder_total_gasto(telefone, session)
-    if intent == "fatura_paga":
+    if comando_exato == "fatura_paga":
+        session.state["current_intent"] = "fatura_paga"
+        session_store.clear_pending_intent(message.channel, telefone)
         return await _responder_fatura_paga(telefone, session)
-    if intent == "graficos":
+    if comando_exato == "graficos":
+        session.state["current_intent"] = "graficos"
+        session_store.clear_pending_intent(message.channel, telefone)
         return await _responder_graficos(telefone, session)
-    if intent == "cep":
-        return await _responder_cep(texto_original)
-    if intent == "cotacao":
+    if comando_exato == "get_exchange_rate":
+        session.state["current_intent"] = "get_exchange_rate"
+        session_store.clear_pending_intent(message.channel, telefone)
         return await _responder_cotacao(texto_original, texto_normalizado)
-    if intent == "lembretes":
-        return await _responder_lembretes(message, session, texto_normalizado)
-    if intent == "noticias":
+    if comando_exato == "lookup_zipcode":
+        session.state["current_intent"] = "lookup_zipcode"
+        session_store.clear_pending_intent(message.channel, telefone)
+        return await _responder_cep(texto_original)
+    if comando_exato == "get_news":
+        session.state["current_intent"] = "get_news"
+        session_store.clear_pending_intent(message.channel, telefone)
         return await _responder_noticias()
-    if intent == "emails":
+    if comando_exato == "get_email_summary":
+        session.state["current_intent"] = "get_email_summary"
+        session_store.clear_pending_intent(message.channel, telefone)
         return await _responder_email_compat()
-    if intent == "rotas":
+    if comando_exato == "get_route":
+        session.state["current_intent"] = "get_route"
+        session_store.clear_pending_intent(message.channel, telefone)
         return await _responder_rota(texto_original)
-    if intent == "registrar_gasto":
-        return await _responder_registrar_gasto(message, session)
-    if intent == "salario":
+    if comando_exato == "register_salary":
+        session.state["current_intent"] = "register_salary"
+        session_store.clear_pending_intent(message.channel, telefone)
         return await _responder_salario(message, session)
+    if comando_exato == "list_reminders":
+        resultado = IntentResult(intent="list_reminders", confidence=1.0, parameters={}, missing_fields=[], should_execute=True)
+        return await _responder_intencao_classificada(message, session, resultado)
+    if comando_exato == "delete_reminder":
+        resultado = IntentResult(intent="delete_reminder", confidence=1.0, parameters={"raw_text": texto_original}, missing_fields=["id"], should_execute=False, clarification_question="Qual é o ID do lembrete que você quer apagar?")
+        return await _responder_intencao_classificada(message, session, resultado)
+    if comando_exato == "listar_moedas":
+        session.state["current_intent"] = "get_exchange_rate"
+        session_store.clear_pending_intent(message.channel, telefone)
+        return AgentResponse(text=listar_moedas_disponiveis(MOEDAS), metadata={"intent": "get_exchange_rate"})
+    if comando_exato == "listar_conversoes":
+        session.state["current_intent"] = "get_exchange_rate"
+        session_store.clear_pending_intent(message.channel, telefone)
+        return AgentResponse(text=listar_conversoes_disponiveis(CONVERSOES), metadata={"intent": "get_exchange_rate"})
+    if comando_exato == "listar_conversoes_moeda":
+        partes = texto_original.split()
+        if len(partes) == 2:
+            moeda = partes[1].upper()
+            if moeda in CONVERSOES:
+                return AgentResponse(text=listar_conversoes_disponiveis_moeda(CONVERSOES, moeda), metadata={"intent": "get_exchange_rate"})
+        return AgentResponse(text=f"⚠️ Moeda '{partes[1].upper() if len(partes) > 1 else ''}' não encontrada ou não tem conversões disponíveis.", metadata={"intent": "get_exchange_rate"})
 
-    logger.info("Intenção conversacional identificada para %s: %s", telefone, texto_original)
-    resposta = await gerar_resposta_conversacional(message, session.state)
-    resposta.metadata.setdefault("intent", "conversational_ai")
-    return resposta
+    resultado_intencao = await classify_intent(message, session.state)
+    session.state["current_intent"] = resultado_intencao.intent
+    logger.info("Intenção classificada para %s: %s (%.2f)", telefone, resultado_intencao.intent, resultado_intencao.confidence)
+    return await _responder_intencao_classificada(message, session, resultado_intencao)
 
 
 async def _processar_midia(message: IncomingMessage) -> AgentResponse:

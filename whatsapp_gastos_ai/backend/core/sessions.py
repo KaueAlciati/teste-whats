@@ -45,10 +45,55 @@ class SessionStore:
         session.state["current_intent"] = None
         session.state["collected_data"] = {}
         session.state["history_loaded"] = False
+        session.state.pop("pending_intent", None)
+        session.state.pop("pending_parameters", None)
+        session.state.pop("pending_missing_fields", None)
+        session.state.pop("pending_clarification_question", None)
 
     def set_current_intent(self, channel: str, user_id: str, intent: str | None) -> None:
         session = self.get(channel, user_id)
         session.state["current_intent"] = intent
+
+    def set_pending_intent(
+        self,
+        channel: str,
+        user_id: str,
+        intent: str | None,
+        *,
+        parameters: dict[str, Any] | None = None,
+        missing_fields: list[str] | None = None,
+        clarification_question: str | None = None,
+    ) -> None:
+        session = self.get(channel, user_id)
+        if intent is None:
+            session.state.pop("pending_intent", None)
+            session.state.pop("pending_parameters", None)
+            session.state.pop("pending_missing_fields", None)
+            session.state.pop("pending_clarification_question", None)
+            return
+        session.state["pending_intent"] = intent
+        session.state["pending_parameters"] = parameters or {}
+        session.state["pending_missing_fields"] = missing_fields or []
+        session.state["pending_clarification_question"] = clarification_question
+
+    def update_pending_parameters(
+        self,
+        channel: str,
+        user_id: str,
+        *,
+        parameters: dict[str, Any] | None = None,
+        missing_fields: list[str] | None = None,
+        clarification_question: str | None = None,
+    ) -> None:
+        session = self.get(channel, user_id)
+        session.state["pending_parameters"] = parameters or session.state.get("pending_parameters") or {}
+        if missing_fields is not None:
+            session.state["pending_missing_fields"] = missing_fields
+        if clarification_question is not None:
+            session.state["pending_clarification_question"] = clarification_question
+
+    def clear_pending_intent(self, channel: str, user_id: str) -> None:
+        self.set_pending_intent(channel, user_id, None)
 
     def append_history(
         self,
