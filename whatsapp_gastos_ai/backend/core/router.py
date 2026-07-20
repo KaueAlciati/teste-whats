@@ -3,12 +3,13 @@ from __future__ import annotations
 import logging
 import os
 import re
-import unicodedata
 from typing import Any
 
 from backend.core.models import AgentResponse, IncomingMessage
+from backend.core.pending_intent_resolver import PendingResolution, resolve_pending_intent
 from backend.core.sessions import SessionData, session_store
 from backend.core.intent_classifier import IntentResult, classify_intent
+from backend.core.text_normalizer import normalize_user_text, remove_accents_for_matching
 from backend.services.api_service import (
     CONVERSOES,
     MOEDAS,
@@ -36,8 +37,90 @@ logger = logging.getLogger(__name__)
 
 
 def _normalizar_texto(texto: str) -> str:
-    base = unicodedata.normalize("NFKD", texto or "").encode("ascii", "ignore").decode("ascii")
-    return re.sub(r"\s+", " ", base.lower()).strip()
+    return remove_accents_for_matching(normalize_user_text(texto))
+
+
+def _question_key(texto: str | None) -> str:
+    return _normalizar_texto(texto or "")
+
+
+def _ajustar_pergunta_repetida(session: SessionData, question: str, field: str | None = None) -> str:
+    last_question = _question_key(session.state.get("last_question"))
+    new_question = _question_key(question)
+    last_field = session.state.get("last_question_field")
+    if last_question and last_question == new_question and (field is None or last_field == field):
+        if field == "period":
+            return "Me diz se é deste mês, do mês passado ou de outro período."
+        if field == "measurement":
+            return "Qual seria a medida aproximada?"
+        if field == "quantity":
+            return "Quantas unidades você precisa?"
+        return "Me manda só essa informação para eu continuar."
+    return question
+
+
+def _registrar_pergunta_pendente(session: SessionData, question: str, field: str | None = None, user_answer: str | None = None) -> None:
+    session_store.set_pending_context(session.channel, session.user_id, question=question, field=field, user_answer=user_answer)
+
+
+async def _tratar_pendente(message: IncomingMessage, session: SessionData, texto_original: str, texto_normalizado: str) -> AgentResponse | None:
+    pending_intent = session.state.get("pending_intent")
+    if not pending_intent:
+        return None
+
+    resolution: PendingResolution = await resolve_pending_intent(session, texto_original, texto_normalizado)
+    if resolution.cancel_intent:
+        session_store.clear_pending_intent(message.channel, message.user_id)
+        session.state["current_intent"] = None
+        return AgentResponse(text="Tudo bem, posso seguir com outra solicitação.", metadata={"intent": "cancelled"})
+
+    if not resolution.matched:
+        if resolution.clarification_question:
+            question = _ajustar_pergunta_repetida(session, resolution.clarification_question, (resolution.remaining_fields or [None])[0])
+            _registrar_pergunta_pendente(session, question, (resolution.remaining_fields or [None])[0], texto_original)
+            session_store.set_pending_intent(
+                message.channel,
+                message.user_id,
+                pending_intent,
+                parameters=resolution.parameters,
+                missing_fields=resolution.remaining_fields,
+                clarification_question=question,
+            )
+            return AgentResponse(text=question, metadata={"intent": pending_intent, "pending": True})
+        return None
+
+    params = dict(resolution.parameters or {})
+    session.state["collected_parameters"] = params
+    session_store.update_pending_parameters(
+        message.channel,
+        message.user_id,
+        parameters=params,
+        missing_fields=resolution.remaining_fields,
+        clarification_question=resolution.clarification_question,
+    )
+    if resolution.remaining_fields:
+        question = _ajustar_pergunta_repetida(session, resolution.clarification_question or "Pode me passar mais um detalhe?", resolution.remaining_fields[0])
+        _registrar_pergunta_pendente(session, question, resolution.remaining_fields[0], texto_original)
+        session_store.set_pending_intent(
+            message.channel,
+            message.user_id,
+            pending_intent,
+            parameters=params,
+            missing_fields=resolution.remaining_fields,
+            clarification_question=question,
+        )
+        return AgentResponse(text=question, metadata={"intent": pending_intent, "pending": True})
+
+    resultado = IntentResult(
+        intent=pending_intent,  # type: ignore[arg-type]
+        confidence=0.99,
+        parameters=params,
+        missing_fields=[],
+        should_execute=True,
+        clarification_question=None,
+    )
+    session_store.clear_pending_intent(message.channel, message.user_id)
+    return await _responder_intencao_classificada(message, session, resultado)
 
 
 def _ajuda_texto(is_admin: bool = False) -> str:
@@ -435,16 +518,18 @@ async def _responder_intencao_classificada(message: IncomingMessage, session: Se
     if resultado.intent == "generate_financial_pdf":
         session.state["current_intent"] = resultado.intent
         if not resultado.should_execute:
+            pergunta = resultado.clarification_question or "Você quer o relatório deste mês ou de outro período?"
             session_store.set_pending_intent(
                 message.channel,
                 telefone,
                 "generate_financial_pdf",
                 parameters=params,
                 missing_fields=resultado.missing_fields,
-                clarification_question=resultado.clarification_question,
+                clarification_question=pergunta,
             )
             session.state["collected_parameters"] = params
-            return AgentResponse(text=resultado.clarification_question or "Você quer o relatório deste mês ou de outro período?", metadata={"intent": resultado.intent})
+            _registrar_pergunta_pendente(session, pergunta, "period", texto_original)
+            return AgentResponse(text=pergunta, metadata={"intent": resultado.intent})
 
         schema = session.state.get("schema") or obter_schema_por_telefone(telefone)
         if not schema:
@@ -471,6 +556,7 @@ async def _responder_intencao_classificada(message: IncomingMessage, session: Se
         session.state["collected_parameters"] = params
         if not resultado.should_execute:
             missing = resultado.missing_fields or []
+            pergunta = resultado.clarification_question or "Certo. Me passa a medida para eu continuar."
             if "measurement" in missing:
                 session.state["etapa"] = "aguardando_medida"
                 session.state.setdefault("dados", {})["produto"] = params.get("product") or "produto"
@@ -487,12 +573,10 @@ async def _responder_intencao_classificada(message: IncomingMessage, session: Se
                 "graphic_quote",
                 parameters=params,
                 missing_fields=resultado.missing_fields,
-                clarification_question=resultado.clarification_question,
+                clarification_question=pergunta,
             )
-            return AgentResponse(
-                text=resultado.clarification_question or "Certo. Me passa a medida para eu continuar.",
-                metadata={"intent": resultado.intent, "pending": True},
-            )
+            _registrar_pergunta_pendente(session, pergunta, missing[0] if missing else None, texto_original)
+            return AgentResponse(text=pergunta, metadata={"intent": resultado.intent, "pending": True})
 
         session_store.clear_pending_intent(message.channel, telefone)
         if session.state.get("etapa") in {"aguardando_medida", "aguardando_quantidade", "aguardando_prazo", "aguardando_arte"}:
@@ -509,16 +593,18 @@ async def _responder_intencao_classificada(message: IncomingMessage, session: Se
         if not schema:
             return AgentResponse(text="❌ Usuário sem schema vinculado.", metadata={"intent": resultado.intent})
         if not resultado.should_execute:
+            pergunta = resultado.clarification_question or "Entendi. Quanto foi o gasto?"
             session_store.set_pending_intent(
                 message.channel,
                 telefone,
                 "register_expense",
                 parameters=params,
                 missing_fields=resultado.missing_fields,
-                clarification_question=resultado.clarification_question,
+                clarification_question=pergunta,
             )
             session.state["collected_parameters"] = params
-            return AgentResponse(text=resultado.clarification_question or "Entendi. Quanto foi o gasto?", metadata={"intent": resultado.intent})
+            _registrar_pergunta_pendente(session, pergunta, (resultado.missing_fields or ["value"])[0], texto_original)
+            return AgentResponse(text=pergunta, metadata={"intent": resultado.intent})
         valor = params.get("value")
         if valor is None:
             match = re.search(r"(?:r\$|rs)?\s*(\d+(?:[.,]\d{1,2})?)", texto_original, flags=re.IGNORECASE)
@@ -590,15 +676,17 @@ async def _responder_intencao_classificada(message: IncomingMessage, session: Se
     if resultado.intent == "create_reminder":
         session.state["collected_parameters"] = params
         if not resultado.should_execute:
+            pergunta = resultado.clarification_question or "Certo. Me diz o que você quer lembrar."
             session_store.set_pending_intent(
                 message.channel,
                 telefone,
                 "create_reminder",
                 parameters=params,
                 missing_fields=resultado.missing_fields,
-                clarification_question=resultado.clarification_question,
+                clarification_question=pergunta,
             )
-            return AgentResponse(text=resultado.clarification_question or "Certo. Me diz o que você quer lembrar.", metadata={"intent": resultado.intent})
+            _registrar_pergunta_pendente(session, pergunta, (resultado.missing_fields or [None])[0], texto_original)
+            return AgentResponse(text=pergunta, metadata={"intent": resultado.intent})
         cron_expr = params.get("cron") or _converter_periodo_para_cron(params.get("date"), params.get("time"))
         if not cron_expr:
             session_store.set_pending_intent(
@@ -643,7 +731,13 @@ async def _processar_texto_financeiro(message: IncomingMessage, session: Session
         if schema:
             session.state["schema"] = schema
 
-    if session.state.get("etapa", "inicio") != "inicio" or session.state.get("pending_intent") == "graphic_quote":
+    pendente_atual = session.state.get("pending_intent")
+    resposta_pendente = await _tratar_pendente(message, session, texto_original, texto_normalizado)
+    if resposta_pendente is not None:
+        session.state["current_intent"] = pendente_atual
+        return resposta_pendente
+
+    if session.state.get("etapa", "inicio") != "inicio" and not session.state.get("pending_intent"):
         resposta_grafica = await gerar_resposta_grafica(telefone, texto_original, "text", canal=message.channel, raw_payload=message.raw_payload)
         if resposta_grafica.response_type != "text" or resposta_grafica.text != "fluxo_grafica_inativo":
             session.state["current_intent"] = "graphic_quote"

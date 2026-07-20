@@ -45,6 +45,9 @@ class SessionStore:
         session.state["current_intent"] = None
         session.state["collected_data"] = {}
         session.state["history_loaded"] = False
+        session.state.pop("last_question", None)
+        session.state.pop("last_question_field", None)
+        session.state.pop("last_user_answer", None)
         session.state.pop("pending_intent", None)
         session.state.pop("pending_parameters", None)
         session.state.pop("pending_missing_fields", None)
@@ -92,8 +95,29 @@ class SessionStore:
         if clarification_question is not None:
             session.state["pending_clarification_question"] = clarification_question
 
+    def set_pending_context(
+        self,
+        channel: str,
+        user_id: str,
+        *,
+        question: str | None = None,
+        field: str | None = None,
+        user_answer: str | None = None,
+    ) -> None:
+        session = self.get(channel, user_id)
+        if question is not None:
+            session.state["last_question"] = question
+        if field is not None:
+            session.state["last_question_field"] = field
+        if user_answer is not None:
+            session.state["last_user_answer"] = user_answer
+
     def clear_pending_intent(self, channel: str, user_id: str) -> None:
         self.set_pending_intent(channel, user_id, None)
+        session = self.get(channel, user_id)
+        session.state.pop("last_question", None)
+        session.state.pop("last_question_field", None)
+        session.state.pop("last_user_answer", None)
 
     def append_history(
         self,

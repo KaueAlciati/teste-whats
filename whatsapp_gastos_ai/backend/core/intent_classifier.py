@@ -9,6 +9,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.core.models import IncomingMessage
+from backend.core.text_normalizer import normalize_user_text, remove_accents_for_matching
 
 logger = logging.getLogger(__name__)
 
@@ -84,14 +85,29 @@ def _session_summary(session_state: dict[str, Any]) -> str:
 
 
 def _normalize(text: str) -> str:
-    text = (text or "").strip().lower()
-    text = re.sub(r"\s+", " ", text)
-    return text
+    return normalize_user_text(text)
+
+
+def _normalize_plain(text: str) -> str:
+    return remove_accents_for_matching(_normalize(text))
 
 
 def _is_greeting(text: str) -> bool:
-    text = _normalize(text)
-    return text in {"oi", "olá", "ola", "bom dia", "boa tarde", "boa noite", "eai", "e aí", "iae", "oi tudo bem", "olá tudo bem"}
+    normalized = _normalize_plain(text)
+    return normalized in {
+        "oi",
+        "ola",
+        "bom dia",
+        "boa tarde",
+        "boa noite",
+        "eai",
+        "e ai",
+        "iae",
+        "oi tudo bem",
+        "ola tudo bem",
+        "oi tudo certo",
+        "ola tudo certo",
+    }
 
 
 def _extract_amount(text: str) -> float | None:
@@ -101,30 +117,70 @@ def _extract_amount(text: str) -> float | None:
     return float(match.group(1).replace(",", "."))
 
 
+def _parse_period(text: str) -> str | None:
+    normalized = _normalize_plain(text)
+
+    if any(token in normalized for token in {"esse mes", "este mes", "desse mes", "deste mes", "do mes", "mes atual", "agora"}):
+        return "current_month"
+    if any(token in normalized for token in {"mes passado", "ultimo mes", "ultimo mes", "mes anterior", "do mes passado"}):
+        return "previous_month"
+    if any(token in normalized for token in {"esse ano", "este ano", "ano atual", "desse ano", "deste ano"}):
+        return "current_year"
+    if any(token in normalized for token in {"hoje", "de hoje", "hj"}):
+        return "today"
+    if "ontem" in normalized:
+        return "yesterday"
+    if re.search(r"\bde\s+[a-zçãõáéíóú]+\s+a\s+[a-zçãõáéíóú]+\b", normalized):
+        return "custom_period"
+    if re.search(r"\b\d{1,2}/\d{1,2}(/\d{2,4})?\b", normalized):
+        return "custom_period"
+    if re.search(r"\b\d{4}-\d{2}-\d{2}\b", normalized):
+        return "custom_period"
+    if re.search(r"\b(janeiro|fevereiro|marco|março|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\b", normalized):
+        return "custom_period"
+    return None
+
+
 def _fallback_pending_intent(text: str, session_state: dict[str, Any]) -> IntentResult | None:
     pending = session_state.get("pending_intent")
-    normalized = _normalize(text)
-    collected = dict(session_state.get("collected_parameters") or {})
+    if not pending:
+        return None
+
+    normalized = _normalize_plain(text)
+    collected = dict(session_state.get("pending_parameters") or session_state.get("collected_parameters") or {})
 
     if pending == "generate_financial_pdf":
-        if any(token in normalized for token in {"desse mês", "deste mês", "esse mês", "este mês", "mês atual", "mes atual"}):
+        period = _parse_period(text)
+        if period:
+            collected["period"] = period
+            return IntentResult(
+                intent="generate_financial_pdf",
+                confidence=0.95,
+                parameters=collected,
+                missing_fields=[],
+                should_execute=True,
+            )
+
+        if normalized in {"sim", "isso", "esse", "desse", "pode", "pode ser", "beleza", "blz"}:
             collected["period"] = "current_month"
             return IntentResult(
                 intent="generate_financial_pdf",
-                confidence=0.86,
+                confidence=0.88,
                 parameters=collected,
                 missing_fields=[],
                 should_execute=True,
             )
-        if any(token in normalized for token in {"mês passado", "mes passado", "último mês", "ultimo mês", "last month"}):
-            collected["period"] = "last_month"
+
+        if normalized in {"nao", "não", "outro", "do outro", "mes passado", "mês passado"}:
+            collected["period"] = "previous_month"
             return IntentResult(
                 intent="generate_financial_pdf",
-                confidence=0.83,
+                confidence=0.88,
                 parameters=collected,
                 missing_fields=[],
                 should_execute=True,
             )
+
         return IntentResult(
             intent="generate_financial_pdf",
             confidence=0.62,
@@ -135,58 +191,89 @@ def _fallback_pending_intent(text: str, session_state: dict[str, Any]) -> Intent
         )
 
     if pending == "graphic_quote":
-        if any(ch in normalized for ch in {"x", "×"}) or re.search(r"\b\d+\s*(?:por|x|×)\s*\d+", normalized):
-            collected["measurement"] = text.strip()
-            if "quantity" not in collected:
-                return IntentResult(
-                    intent="graphic_quote",
-                    confidence=0.79,
-                    parameters=collected,
-                    missing_fields=["quantity"],
-                    should_execute=False,
-                    clarification_question="Beleza. Quantas unidades você precisa?",
-                )
-        if any(token in normalized for token in {"unidade", "unidades", "qtd", "quantidade"}) and _extract_amount(text) is None:
+        measurement = collected.get("measurement")
+        quantity = collected.get("quantity")
+
+        match_measure = re.search(r"\b(\d{1,4})\s*(?:x|por|×)\s*(\d{1,4})\b", normalized)
+        if match_measure:
+            measurement = f"{match_measure.group(1)}x{match_measure.group(2)}"
+            collected["measurement"] = measurement
+        elif not measurement and re.fullmatch(r"\d{1,4}\s*[x×]\s*\d{1,4}", normalized.replace(" ", "")):
+            normalized_compact = normalized.replace(" ", "")
+            piece = re.search(r"\b\d{1,4}\s*[x×]\s*\d{1,4}\b", normalized_compact)
+            if piece:
+                measurement = piece.group(0).replace("×", "x").replace(" ", "")
+                collected["measurement"] = measurement
+
+        match_quantity = re.search(r"\b(\d+)\s*(?:un|unid|unidades|pecas|peças|pcs|pçs)\b", normalized)
+        if match_quantity:
+            quantity = int(match_quantity.group(1))
+            collected["quantity"] = quantity
+        elif quantity is None and normalized.isdigit():
+            quantity = int(normalized)
+            collected["quantity"] = quantity
+
+        remaining = []
+        if not collected.get("measurement"):
+            remaining.append("measurement")
+        if collected.get("measurement") and not collected.get("quantity"):
+            remaining.append("quantity")
+
+        if not remaining:
             return IntentResult(
                 intent="graphic_quote",
-                confidence=0.7,
-                parameters=collected,
-                missing_fields=["quantity"],
-                should_execute=False,
-                clarification_question="Quantas unidades você precisa?",
-            )
-        if "quantity" in collected and "measurement" in collected:
-            return IntentResult(
-                intent="graphic_quote",
-                confidence=0.8,
+                confidence=0.95,
                 parameters=collected,
                 missing_fields=[],
                 should_execute=True,
             )
 
+        clarification = "Certo. Qual seria a medida aproximada?" if "measurement" in remaining else "Beleza. Quantas unidades você precisa?"
+        return IntentResult(
+            intent="graphic_quote",
+            confidence=0.78,
+            parameters=collected,
+            missing_fields=remaining,
+            should_execute=False,
+            clarification_question=clarification,
+        )
+
     if pending == "create_reminder":
-        collected["text"] = collected.get("text") or text.strip()
-        if any(token in normalized for token in {"amanhã", "amanha", "depois de amanhã", "depois de amanha"}):
-            collected["date"] = "tomorrow"
-        if re.search(r"\b\d{1,2}[:h]\d{0,2}\b", normalized) or re.search(r"\b\d{1,2}\b", normalized):
-            collected["time"] = text.strip()
-        missing = [field for field in ("text", "date", "time") if not collected.get(field)]
-        if not missing:
+        if "text" not in collected and text.strip():
+            collected["text"] = text.strip()
+        if "date" not in collected:
+            period = _parse_period(text)
+            if period == "today":
+                collected["date"] = "today"
+            elif period == "yesterday":
+                collected["date"] = "yesterday"
+            elif period == "current_month":
+                collected["date"] = "current_month"
+            elif "amanha" in normalized or "amanhã" in normalized:
+                collected["date"] = "tomorrow"
+        if "time" not in collected:
+            match_time = re.search(r"\b(\d{1,2})(?:[:h](\d{1,2}))?\b", normalized)
+            if match_time:
+                collected["time"] = f"{int(match_time.group(1)):02d}:{int(match_time.group(2) or '00'):02d}"
+
+        remaining = [field for field in ("text", "date", "time") if not collected.get(field)]
+        if not remaining:
             return IntentResult(
                 intent="create_reminder",
-                confidence=0.8,
+                confidence=0.9,
                 parameters=collected,
                 missing_fields=[],
                 should_execute=True,
             )
-        question = "Qual horário você quer para o lembrete?" if "time" in missing else "O que você quer que eu lembre?"
+
+        clarification = "Certo. Para quando você quer esse lembrete?" if "date" in remaining else "Qual horário você quer para o lembrete?"
         return IntentResult(
             intent="create_reminder",
-            confidence=0.68,
+            confidence=0.7,
             parameters=collected,
-            missing_fields=missing,
+            missing_fields=remaining,
             should_execute=False,
-            clarification_question=question,
+            clarification_question=clarification,
         )
 
     return None
@@ -195,70 +282,67 @@ def _fallback_pending_intent(text: str, session_state: dict[str, Any]) -> Intent
 def _fallback_classification(message: IncomingMessage, session_state: dict[str, Any]) -> IntentResult:
     text = message.text or ""
     normalized = _normalize(text)
+    normalized_plain = _normalize_plain(text)
 
     pending_result = _fallback_pending_intent(text, session_state)
     if pending_result:
         return pending_result
 
     if _is_greeting(text):
-        return IntentResult(intent="greeting", confidence=0.93, parameters={}, missing_fields=[], should_execute=True)
+        return IntentResult(intent="greeting", confidence=0.95, parameters={}, missing_fields=[], should_execute=True)
 
-    if "ajuda" in normalized or "menu" in normalized or "comandos" in normalized:
+    if any(token in normalized_plain for token in {"ajuda", "menu", "comandos"}):
         return IntentResult(intent="help", confidence=0.95, parameters={}, missing_fields=[], should_execute=True)
 
     amount = _extract_amount(text)
-    if any(token in normalized for token in {"gastei", "gasto", "gastos", "paguei", "coloca", "registrar", "anota"}) and amount is not None:
+    if amount is not None and any(token in normalized_plain for token in {"gastei", "gasto", "gastos", "paguei", "coloca", "registrar", "anota"}):
         payment_method = None
-        if "pix" in normalized:
+        if "pix" in normalized_plain:
             payment_method = "pix"
-        elif "cartão" in normalized or "cartao" in normalized:
+        elif "cartao" in normalized_plain:
             payment_method = "cartao"
-        elif "débito" in normalized or "debito" in normalized:
+        elif "debito" in normalized_plain:
             payment_method = "debito"
-        elif "dinheiro" in normalized:
+        elif "dinheiro" in normalized_plain:
             payment_method = "dinheiro"
-        params = {
-            "value": amount,
-            "description": text.strip(),
-            "payment_method": payment_method,
-        }
-        missing = [] if payment_method else ["payment_method"]
+        params = {"value": amount, "description": text.strip(), "payment_method": payment_method}
         return IntentResult(
             intent="register_expense",
-            confidence=0.9,
+            confidence=0.93,
             parameters=params,
-            missing_fields=missing,
-            should_execute=not missing,
-            clarification_question="Foi no pix, cartão, débito ou dinheiro?" if missing else None,
+            missing_fields=[] if payment_method else ["payment_method"],
+            should_execute=payment_method is not None,
+            clarification_question=None if payment_method is not None else "Foi no pix, cartão, débito ou dinheiro?",
         )
 
-    if any(token in normalized for token in {"pdf", "relatório", "relatorio", "resumo"}) and any(
-        token in normalized for token in {"gasto", "gastos", "conta", "despesa", "despesas"}
+    if any(token in normalized_plain for token in {"pdf", "relatorio", "resumo"}) and any(
+        token in normalized_plain for token in {"gasto", "gastos", "conta", "despesa", "despesas"}
     ):
-        period = "current_month" if any(token in normalized for token in {"esse mês", "desse mês", "este mês", "deste mês", "mes atual", "mês atual"}) else None
+        period = _parse_period(text)
         missing = [] if period else ["period"]
         return IntentResult(
             intent="generate_financial_pdf",
             confidence=0.94,
             parameters={"period": period, "format": "pdf"},
             missing_fields=missing,
-            should_execute=not missing,
-            clarification_question="Você quer o relatório deste mês ou de outro período?" if missing else None,
+            should_execute=period is not None,
+            clarification_question=None if period else "Você quer o relatório deste mês ou de outro período?",
         )
 
-    if any(token in normalized for token in {"quanto gastei", "quanto eu gastei", "total gasto", "meus gastos", "quanto foi"}):
+    if "quanto" in normalized_plain and "gastei" in normalized_plain:
+        period = _parse_period(text) or "current_month"
         return IntentResult(
             intent="get_total_expense",
             confidence=0.92,
-            parameters={"period": "current_month"},
+            parameters={"period": period},
             missing_fields=[],
             should_execute=True,
         )
 
-    if any(token in normalized for token in {"saldo", "salário", "salario"}):
+    if any(token in normalized_plain for token in {"saldo", "salario", "salário"}):
         return IntentResult(intent="register_salary", confidence=0.83, parameters={"raw_text": text.strip()}, missing_fields=[], should_execute=True)
 
-    if any(token in normalized for token in {"lembra", "lembrete", "recordar"}):
+    if any(token in normalized_plain for token in {"lembra", "lembrete", "recordar"}):
         return IntentResult(
             intent="create_reminder",
             confidence=0.86,
@@ -268,10 +352,10 @@ def _fallback_classification(message: IncomingMessage, session_state: dict[str, 
             clarification_question="Certo. Para quando você quer esse lembrete?",
         )
 
-    if "meus lembretes" in normalized or "listar lembretes" in normalized:
+    if "meus lembretes" in normalized_plain or "listar lembretes" in normalized_plain:
         return IntentResult(intent="list_reminders", confidence=0.9, parameters={}, missing_fields=[], should_execute=True)
 
-    if "apagar lembrete" in normalized or "excluir lembrete" in normalized:
+    if "apagar lembrete" in normalized_plain or "excluir lembrete" in normalized_plain:
         return IntentResult(
             intent="delete_reminder",
             confidence=0.88,
@@ -281,47 +365,60 @@ def _fallback_classification(message: IncomingMessage, session_state: dict[str, 
             clarification_question="Qual é o ID do lembrete que você quer apagar?",
         )
 
-    if any(token in normalized for token in {"dólar", "dolar", "euro", "cotação", "cotacao"}):
+    if any(token in normalized_plain for token in {"dolar", "euro", "cotacao"}):
+        currency = None
+        if "dolar" in normalized_plain:
+            currency = "USD"
+        elif "euro" in normalized_plain:
+            currency = "EUR"
         return IntentResult(
             intent="get_exchange_rate",
             confidence=0.9,
-            parameters={"currency": "USD" if "dolar" in normalized else None},
+            parameters={"currency": currency},
             missing_fields=[],
             should_execute=True,
         )
 
-    if re.search(r"\b\d{8}\b", normalized) or "cep" in normalized:
+    if re.search(r"\b\d{8}\b", normalized_plain) or "cep" in normalized_plain:
         return IntentResult(intent="lookup_zipcode", confidence=0.9, parameters={"raw_text": text.strip()}, missing_fields=[], should_execute=True)
 
-    if any(token in normalized for token in {"rota", "rotas"}):
-        return IntentResult(intent="get_route", confidence=0.84, parameters={"raw_text": text.strip()}, missing_fields=["destination"], should_execute=False, clarification_question="Para qual destino você quer calcular a rota?")
+    if any(token in normalized_plain for token in {"rota", "rotas"}):
+        return IntentResult(
+            intent="get_route",
+            confidence=0.84,
+            parameters={"raw_text": text.strip()},
+            missing_fields=["destination"],
+            should_execute=False,
+            clarification_question="Para qual destino você quer calcular a rota?",
+        )
 
-    if any(token in normalized for token in {"notícia", "noticias", "notícias"}):
+    if any(token in normalized_plain for token in {"noticia", "noticias"}):
         return IntentResult(intent="get_news", confidence=0.92, parameters={}, missing_fields=[], should_execute=True)
 
-    if any(token in normalized for token in {"e-mail", "email", "emails"}):
+    if any(token in normalized_plain for token in {"e-mail", "email", "emails"}):
         return IntentResult(intent="get_email_summary", confidence=0.82, parameters={}, missing_fields=[], should_execute=True)
 
-    if any(token in normalized for token in {"gráfica", "grafica", "adesivo", "banner", "placa", "fachada", "impressão", "impressao"}):
+    if any(token in normalized_plain for token in {"grafica", "adesivo", "banner", "placa", "fachada", "impressao", "impressão"}):
         product = None
         for candidate in ("adesivo", "banner", "placa", "fachada", "cartao", "cartão", "panfleto", "flyer"):
             if candidate in normalized:
                 product = candidate
                 break
-        params = {"product": product or "produto", "measurement": None, "quantity": None}
         return IntentResult(
             intent="graphic_quote",
             confidence=0.88,
-            parameters=params,
+            parameters={"product": product or "produto", "measurement": None, "quantity": None},
             missing_fields=["measurement"],
             should_execute=False,
             clarification_question="Certo. Qual seria a medida aproximada?",
         )
 
-    if any(token in normalized for token in {"você consegue", "o que você faz", "o que consegue fazer", "oque voce faz"}):
+    if any(token in normalized_plain for token in {"voce consegue", "o que voce faz", "oque voce faz"}) or (
+        "consegue" in normalized_plain and "fazer" in normalized_plain
+    ):
         return IntentResult(intent="general_conversation", confidence=0.72, parameters={}, missing_fields=[], should_execute=True)
 
-    if any(token in normalized for token in {"humano", "atendente", "vendedor", "pessoa"}):
+    if any(token in normalized_plain for token in {"humano", "atendente", "vendedor", "pessoa"}):
         return IntentResult(intent="human_support", confidence=0.79, parameters={}, missing_fields=[], should_execute=True)
 
     return IntentResult(
@@ -330,7 +427,7 @@ def _fallback_classification(message: IncomingMessage, session_state: dict[str, 
         parameters={"raw_text": text.strip()},
         missing_fields=[],
         should_execute=False,
-        clarification_question="Você quer ajuda com finanças, gráfico, lembretes, cotação ou relatórios?",
+        clarification_question="Você quer ajuda com finanças, gráfica, lembretes, cotação ou relatórios?",
     )
 
 

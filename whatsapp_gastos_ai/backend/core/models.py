@@ -10,6 +10,8 @@ class IncomingMessage:
     channel: str
     message_type: str
     text: Optional[str] = None
+    text_original: Optional[str] = None
+    text_normalized: Optional[str] = None
     media_id: Optional[str] = None
     media_url: Optional[str] = None
     file_name: Optional[str] = None

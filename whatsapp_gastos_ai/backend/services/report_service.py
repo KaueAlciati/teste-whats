@@ -7,6 +7,7 @@ import tempfile
 import textwrap
 from collections import Counter
 from datetime import date, datetime, time, timedelta, timezone
+from typing import Any
 
 from backend.services.db_init import conectar_bd
 
@@ -15,35 +16,64 @@ logger = logging.getLogger(__name__)
 UTC_MINUS_3 = timezone(timedelta(hours=-3))
 
 
-def _periodo_padrao(periodo: str | None) -> tuple[datetime, datetime, str]:
+def _periodo_padrao(
+    periodo: str | None,
+    *,
+    inicio: date | datetime | None = None,
+    fim: date | datetime | None = None,
+) -> tuple[datetime, datetime, str]:
     hoje = datetime.now(UTC_MINUS_3).date()
     periodo_normalizado = (periodo or "current_month").strip().lower()
 
-    if periodo_normalizado in {"current_month", "this_month", "month", "mes atual", "mês atual"}:
-        inicio = hoje.replace(day=1)
-        ultimo_dia = calendar.monthrange(hoje.year, hoje.month)[1]
-        fim = hoje.replace(day=ultimo_dia)
-        label = hoje.strftime("%m/%Y")
+    if inicio and fim:
+        inicio_date = inicio.date() if isinstance(inicio, datetime) else inicio
+        fim_date = fim.date() if isinstance(fim, datetime) else fim
+        label = f"{inicio_date.strftime('%d/%m/%Y')} a {fim_date.strftime('%d/%m/%Y')}"
+        return (
+            datetime.combine(inicio_date, time.min, tzinfo=UTC_MINUS_3),
+            datetime.combine(fim_date, time.max, tzinfo=UTC_MINUS_3),
+            label,
+        )
+
+    if periodo_normalizado in {"current_month", "this_month", "month", "mes atual", "mês atual", "today", "hoje"}:
+        if periodo_normalizado == "today":
+            inicio_date = fim_date = hoje
+            label = hoje.strftime("%d/%m/%Y")
+        else:
+            inicio_date = hoje.replace(day=1)
+            ultimo_dia = calendar.monthrange(hoje.year, hoje.month)[1]
+            fim_date = hoje.replace(day=ultimo_dia)
+            label = hoje.strftime("%m/%Y")
     elif periodo_normalizado in {"last_month", "previous_month", "mês passado", "mes passado", "último mês", "ultimo mês"}:
         primeiro_mes_atual = hoje.replace(day=1)
         ultimo_dia_mes_passado = primeiro_mes_atual - timedelta(days=1)
-        inicio = ultimo_dia_mes_passado.replace(day=1)
-        fim = ultimo_dia_mes_passado
-        label = inicio.strftime("%m/%Y")
+        inicio_date = ultimo_dia_mes_passado.replace(day=1)
+        fim_date = ultimo_dia_mes_passado
+        label = inicio_date.strftime("%m/%Y")
+    elif periodo_normalizado in {"current_year", "this_year", "ano atual", "esse ano", "este ano"}:
+        inicio_date = date(hoje.year, 1, 1)
+        fim_date = date(hoje.year, 12, 31)
+        label = str(hoje.year)
+    elif periodo_normalizado == "yesterday":
+        inicio_date = fim_date = hoje - timedelta(days=1)
+        label = inicio_date.strftime("%d/%m/%Y")
     elif re.match(r"^\d{4}-\d{2}$", periodo_normalizado):
         ano, mes = map(int, periodo_normalizado.split("-"))
-        inicio = date(ano, mes, 1)
+        inicio_date = date(ano, mes, 1)
         ultimo_dia = calendar.monthrange(ano, mes)[1]
-        fim = date(ano, mes, ultimo_dia)
+        fim_date = date(ano, mes, ultimo_dia)
         label = f"{mes:02d}/{ano}"
+    elif re.match(r"^\d{4}-\d{2}-\d{2}$", periodo_normalizado):
+        inicio_date = fim_date = datetime.strptime(periodo_normalizado, "%Y-%m-%d").date()
+        label = inicio_date.strftime("%d/%m/%Y")
     else:
-        inicio = hoje.replace(day=1)
+        inicio_date = hoje.replace(day=1)
         ultimo_dia = calendar.monthrange(hoje.year, hoje.month)[1]
-        fim = hoje.replace(day=ultimo_dia)
+        fim_date = hoje.replace(day=ultimo_dia)
         label = hoje.strftime("%m/%Y")
 
-    inicio_dt = datetime.combine(inicio, time.min, tzinfo=UTC_MINUS_3)
-    fim_dt = datetime.combine(fim, time.max, tzinfo=UTC_MINUS_3)
+    inicio_dt = datetime.combine(inicio_date, time.min, tzinfo=UTC_MINUS_3)
+    fim_dt = datetime.combine(fim_date, time.max, tzinfo=UTC_MINUS_3)
     return inicio_dt, fim_dt, label
 
 
@@ -127,8 +157,14 @@ def _build_pdf(pages: list[list[str]]) -> bytes:
     return bytes(pdf)
 
 
-def gerar_pdf_financeiro(schema: str, periodo: str | None = None) -> dict[str, str]:
-    inicio_dt, fim_dt, label_periodo = _periodo_padrao(periodo)
+def gerar_pdf_financeiro(
+    schema: str,
+    periodo: str | None = None,
+    *,
+    inicio: date | datetime | None = None,
+    fim: date | datetime | None = None,
+) -> dict[str, str]:
+    inicio_dt, fim_dt, label_periodo = _periodo_padrao(periodo, inicio=inicio, fim=fim)
     conn = conectar_bd()
     cursor = conn.cursor()
     cursor.execute(

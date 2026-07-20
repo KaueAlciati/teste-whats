@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import json
 from typing import Any
 
 from backend.services.db_init import conectar_bd
@@ -10,12 +11,17 @@ logger = logging.getLogger(__name__)
 MAX_CONTENT_LENGTH = 5000
 
 
-def _normalizar_content(content: Any) -> str:
+def _normalizar_content(content: Any, metadata: dict[str, Any] | None = None) -> str:
     if content is None:
         return ""
     if isinstance(content, str):
-        return content[:MAX_CONTENT_LENGTH]
-    return str(content)[:MAX_CONTENT_LENGTH]
+        texto = content[:MAX_CONTENT_LENGTH]
+    else:
+        texto = str(content)[:MAX_CONTENT_LENGTH]
+    if metadata:
+        payload = {"content": texto, "metadata": metadata}
+        return json.dumps(payload, ensure_ascii=False)[:MAX_CONTENT_LENGTH]
+    return texto
 
 
 def salvar_mensagem_conversa(
@@ -24,8 +30,9 @@ def salvar_mensagem_conversa(
     direction: str,
     message_type: str,
     content: Any,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
-    texto = _normalizar_content(content)
+    texto = _normalizar_content(content, metadata)
     conn = None
     cursor = None
     try:
@@ -71,7 +78,7 @@ def carregar_historico_conversa(user_id: str, channel: str, limite: int = 20) ->
         historico = [
             {
                 "role": "assistant" if direction == "assistant" else "user",
-                "content": content,
+                "content": _descompactar_content(content),
                 "message_type": message_type,
             }
             for direction, message_type, content in reversed(rows)
@@ -85,6 +92,18 @@ def carregar_historico_conversa(user_id: str, channel: str, limite: int = 20) ->
             cursor.close()
         if conn is not None:
             conn.close()
+
+
+def _descompactar_content(content: Any) -> str:
+    if not isinstance(content, str):
+        return str(content)
+    try:
+        payload = json.loads(content)
+    except Exception:
+        return content
+    if isinstance(payload, dict) and "content" in payload:
+        return str(payload.get("content") or "")
+    return content
 
 
 def limpar_historico_conversa(user_id: str, channel: str) -> None:

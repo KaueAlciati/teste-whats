@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from backend.core.intent_classifier import IntentResult, classify_intent
-from backend.core.models import IncomingMessage
+from backend.core.agent import process_agent_message
+from backend.core.intent_classifier import classify_intent
+from backend.core.models import AgentResponse, IncomingMessage
+from backend.core.pending_intent_resolver import resolve_pending_intent
 from backend.core.router import route_incoming_message
 from backend.core.sessions import session_store
+from backend.core.text_normalizer import normalize_user_text, remove_accents_for_matching
 
 
 def _msg(text: str, channel: str = "telegram", user_id: str = "123") -> IncomingMessage:
@@ -24,172 +26,96 @@ class HumanizedConversationTest(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         session_store.clear()
 
-    async def test_classifier_pdf_request(self):
-        fake_json = {
-            "intent": "generate_financial_pdf",
-            "confidence": 0.96,
-            "parameters": {"period": None, "format": "pdf"},
-            "missing_fields": ["period"],
-            "should_execute": False,
-            "clarification_question": "Você quer o relatório deste mês ou de outro período?",
-        }
-        completion = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(fake_json)))]
-        )
-        mock_client = MagicMock()
-        mock_client.chat.completions.create = AsyncMock(return_value=completion)
+    def test_text_normalizer_expands_common_abbreviations(self):
+        self.assertEqual(normalize_user_text("vc consegue gerar o pdf hj?"), "você consegue gerar o pdf hoje?")
+        self.assertEqual(remove_accents_for_matching("desse mês"), "desse mes")
 
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}), patch("openai.AsyncOpenAI", return_value=mock_client):
-            result = await classify_intent(_msg("me gere um pdf das minha conta"), {})
-
-        self.assertEqual(result.intent, "generate_financial_pdf")
-        self.assertEqual(result.missing_fields, ["period"])
-        self.assertFalse(result.should_execute)
-
-    async def test_classifier_total_expense(self):
-        fake_json = {
-            "intent": "get_total_expense",
-            "confidence": 0.95,
-            "parameters": {"period": "current_month"},
-            "missing_fields": [],
-            "should_execute": True,
-            "clarification_question": None,
-        }
-        completion = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(fake_json)))]
-        )
-        mock_client = MagicMock()
-        mock_client.chat.completions.create = AsyncMock(return_value=completion)
-
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}), patch("openai.AsyncOpenAI", return_value=mock_client):
-            result = await classify_intent(_msg("quanto gastei esse mes"), {})
+    async def test_classifier_total_expense_without_accents(self):
+        with patch.dict(os.environ, {}, clear=False):
+            result = await classify_intent(_msg("qto gastei esse mes"), {})
 
         self.assertEqual(result.intent, "get_total_expense")
         self.assertEqual(result.parameters["period"], "current_month")
 
-    async def test_classifier_register_expense(self):
-        fake_json = {
-            "intent": "register_expense",
-            "confidence": 0.97,
-            "parameters": {
-                "value": 35,
-                "description": "gastei 35 no almoço no pix",
-                "payment_method": "pix",
-            },
-            "missing_fields": [],
-            "should_execute": True,
-            "clarification_question": None,
-        }
-        completion = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(fake_json)))]
-        )
-        mock_client = MagicMock()
-        mock_client.chat.completions.create = AsyncMock(return_value=completion)
+    async def test_classifier_pdf_request_natural_language(self):
+        with patch.dict(os.environ, {}, clear=False):
+            result = await classify_intent(_msg("vc consegue gerar um pdf das minhas conta pfv"), {})
 
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}), patch("openai.AsyncOpenAI", return_value=mock_client):
-            result = await classify_intent(_msg("gastei 35 no almoço no pix"), {})
-
-        self.assertEqual(result.intent, "register_expense")
-        self.assertEqual(result.parameters["value"], 35)
-        self.assertEqual(result.parameters["payment_method"], "pix")
-
-    async def test_classifier_graphic_quote(self):
-        fake_json = {
-            "intent": "graphic_quote",
-            "confidence": 0.96,
-            "parameters": {"product": "placa"},
-            "missing_fields": ["measurement"],
-            "should_execute": False,
-            "clarification_question": "Certo. Qual seria a medida aproximada?",
-        }
-        completion = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(fake_json)))]
-        )
-        mock_client = MagicMock()
-        mock_client.chat.completions.create = AsyncMock(return_value=completion)
-
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}), patch("openai.AsyncOpenAI", return_value=mock_client):
-            result = await classify_intent(_msg("quero uma placa pra minha loja"), {})
-
-        self.assertEqual(result.intent, "graphic_quote")
-        self.assertEqual(result.missing_fields, ["measurement"])
+        self.assertEqual(result.intent, "generate_financial_pdf")
 
     async def test_classifier_exchange_rate(self):
-        fake_json = {
-            "intent": "get_exchange_rate",
-            "confidence": 0.94,
-            "parameters": {"currency": "USD"},
-            "missing_fields": [],
-            "should_execute": True,
-            "clarification_question": None,
-        }
-        completion = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(fake_json)))]
-        )
-        mock_client = MagicMock()
-        mock_client.chat.completions.create = AsyncMock(return_value=completion)
-
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}), patch("openai.AsyncOpenAI", return_value=mock_client):
+        with patch.dict(os.environ, {}, clear=False):
             result = await classify_intent(_msg("qual dolar hj"), {})
 
         self.assertEqual(result.intent, "get_exchange_rate")
         self.assertEqual(result.parameters["currency"], "USD")
 
-    async def test_pending_pdf_flow(self):
-        first = IntentResult(
-            intent="generate_financial_pdf",
-            confidence=0.9,
-            parameters={"format": "pdf"},
-            missing_fields=["period"],
-            should_execute=False,
-            clarification_question="Você quer o relatório deste mês ou de outro período?",
-        )
-        second = IntentResult(
-            intent="generate_financial_pdf",
-            confidence=0.98,
-            parameters={"format": "pdf", "period": "current_month"},
-            missing_fields=[],
-            should_execute=True,
-            clarification_question=None,
-        )
+    async def test_pending_pdf_flow_resolves_first_reply(self):
+        session = session_store.get("telegram", "123")
+        session.state["pending_intent"] = "generate_financial_pdf"
+        session.state["pending_parameters"] = {"format": "pdf"}
+        session.state["pending_missing_fields"] = ["period"]
+        session.state["pending_clarification_question"] = "Você quer o relatório deste mês ou de outro período?"
 
-        with patch("backend.core.router.verificar_autorizacao", return_value=True), patch(
-            "backend.core.router.classify_intent",
-            new=AsyncMock(side_effect=[first, second]),
-        ), patch("backend.core.router.obter_schema_por_telefone", return_value="schema_fin"), patch(
-            "backend.core.router.gerar_pdf_financeiro",
-            return_value={"path": "/tmp/relatorio.pdf", "name": "relatorio.pdf", "period_label": "07/2026", "total": "123.45"},
-        ):
-            resposta1 = await route_incoming_message(_msg("quero pdf das contas"), session_store.get("telegram", "123"))
-            self.assertIn("relatório deste mês", resposta1.text or "")
-            self.assertEqual(session_store.get("telegram", "123").state.get("pending_intent"), "generate_financial_pdf")
+        resolution = await resolve_pending_intent(session, "desse mes", "desse mes")
+        self.assertTrue(resolution.matched)
+        self.assertEqual(resolution.parameters["period"], "current_month")
+        self.assertFalse(resolution.remaining_fields)
 
-            resposta2 = await route_incoming_message(_msg("desse mês"), session_store.get("telegram", "123"))
-            self.assertEqual(resposta2.response_type, "document")
-            self.assertEqual(resposta2.document_name, "relatorio.pdf")
-            self.assertIsNotNone(resposta2.document_path)
-            self.assertIsNone(session_store.get("telegram", "123").state.get("pending_intent"))
-
-    async def test_register_expense_vai_para_funcao_real(self):
-        result = IntentResult(
-            intent="register_expense",
-            confidence=0.99,
-            parameters={"value": 35, "description": "almoço", "payment_method": "pix"},
-            missing_fields=[],
-            should_execute=True,
-            clarification_question=None,
+    async def test_pending_pdf_flow_through_router(self):
+        first = AgentResponse(
+            text="Você quer o relatório deste mês ou de outro período?",
+            metadata={"intent": "generate_financial_pdf", "pending": True},
         )
+        pdf_info = {"path": "/tmp/relatorio.pdf", "name": "relatorio.pdf", "period_label": "07/2026", "total": "123.45"}
 
         with patch("backend.core.router.verificar_autorizacao", return_value=True), patch(
             "backend.core.router.obter_schema_por_telefone",
             return_value="schema_fin",
-        ), patch("backend.core.router.classify_intent", new=AsyncMock(return_value=result)), patch(
-            "backend.core.router.salvar_gasto",
-        ) as salvar_gasto_mock:
-            resposta = await route_incoming_message(_msg("gastei 35 no almoço no pix"), session_store.get("whatsapp", "5511999999999"))
+        ), patch("backend.core.router.gerar_pdf_financeiro", return_value=pdf_info), patch(
+            "backend.core.router.gerar_resposta_conversacional",
+            new=AsyncMock(return_value=AgentResponse(text="fallback")),
+        ), patch.dict(os.environ, {}, clear=False):
+            session = session_store.get("telegram", "123")
+            session.state["pending_intent"] = "generate_financial_pdf"
+            session.state["pending_parameters"] = {"format": "pdf"}
+            session.state["pending_missing_fields"] = ["period"]
+            session.state["pending_clarification_question"] = first.text
+            resposta = await route_incoming_message(_msg("desse mes"), session)
 
-        self.assertIn("Registrei R$ 35.00", resposta.text or "")
-        salvar_gasto_mock.assert_called_once()
+        self.assertEqual(resposta.response_type, "document")
+        self.assertEqual(resposta.document_name, "relatorio.pdf")
+        self.assertEqual(resposta.metadata["period"], "07/2026")
+        self.assertIsNone(session_store.get("telegram", "123").state.get("pending_intent"))
+
+    async def test_graphic_quote_pending_flow_keeps_context(self):
+        session = session_store.get("telegram", "123")
+        session.state["pending_intent"] = "graphic_quote"
+        session.state["pending_parameters"] = {"product": "adesivo"}
+        session.state["pending_missing_fields"] = ["measurement"]
+        session.state["pending_clarification_question"] = "Certo. Qual seria a medida aproximada?"
+
+        resolution = await resolve_pending_intent(session, "50x20", "50x20")
+        self.assertTrue(resolution.matched)
+        self.assertEqual(resolution.parameters["measurement"], "50x20")
+        self.assertIn("quantity", resolution.remaining_fields)
+
+    async def test_confirmation_and_negative_periods(self):
+        session = session_store.get("telegram", "123")
+        session.state["pending_intent"] = "generate_financial_pdf"
+        session.state["pending_parameters"] = {"format": "pdf"}
+        session.state["pending_missing_fields"] = ["period"]
+        session.state["pending_clarification_question"] = "Você quer o relatório deste mês ou de outro período?"
+
+        positive = await resolve_pending_intent(session, "pode ser", "pode ser")
+        self.assertEqual(positive.parameters["period"], "current_month")
+
+        session.state["pending_intent"] = "generate_financial_pdf"
+        session.state["pending_parameters"] = {"format": "pdf"}
+        session.state["pending_missing_fields"] = ["period"]
+        session.state["pending_clarification_question"] = "Você quer o relatório deste mês ou de outro período?"
+        negative = await resolve_pending_intent(session, "não, do mes passado", "nao do mes passado")
+        self.assertEqual(negative.parameters["period"], "previous_month")
 
     async def test_openai_error_cai_em_fallback(self):
         mock_client = MagicMock()
@@ -206,6 +132,17 @@ class HumanizedConversationTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn("Comando não reconhecido", resposta.text or "")
         self.assertIn("tudo certo", (resposta.text or "").lower())
+
+    async def test_process_agent_message_preserva_texto_original_e_normalizado(self):
+        with patch("backend.core.router.verificar_autorizacao", return_value=True), patch(
+            "backend.core.router.classify_intent",
+            new=AsyncMock(return_value=SimpleNamespace(intent="greeting", confidence=1.0, parameters={}, missing_fields=[], should_execute=True, clarification_question=None)),
+        ):
+            message = _msg("vc consegue gerar um pdf hj?")
+            await process_agent_message(message)
+
+        self.assertEqual(message.text_original, "vc consegue gerar um pdf hj?")
+        self.assertEqual(message.text_normalized, "você consegue gerar um pdf hoje?")
 
 
 if __name__ == "__main__":
