@@ -3,18 +3,26 @@ from __future__ import annotations
 import json
 import logging
 import os
+from pathlib import Path
 
 import requests
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MOEDAS_FILE = os.path.join(BASE_DIR, "..", "data", "moedas.json")
-CONVERSOES_FILE = os.path.join(BASE_DIR, "..", "data", "conversoes.json")
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = BASE_DIR / "data"
+MOEDAS_FILE = DATA_DIR / "moedas.json"
+CONVERSOES_FILE = DATA_DIR / "conversoes.json"
 
 logger = logging.getLogger(__name__)
 
-with open(MOEDAS_FILE, "r", encoding="utf-8") as file:
+if not MOEDAS_FILE.exists():
+    raise FileNotFoundError(f"Arquivo de moedas não encontrado: {MOEDAS_FILE}")
+
+if not CONVERSOES_FILE.exists():
+    raise FileNotFoundError(f"Arquivo de conversões não encontrado: {CONVERSOES_FILE}")
+
+with MOEDAS_FILE.open("r", encoding="utf-8") as file:
     dados_moedas = json.load(file)
-with open(CONVERSOES_FILE, "r", encoding="utf-8") as file:
+with CONVERSOES_FILE.open("r", encoding="utf-8") as file:
     dados_conversoes = json.load(file)
 
 API_COTACAO = os.getenv("API_COTACAO")
