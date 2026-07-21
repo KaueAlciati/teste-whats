@@ -6,14 +6,17 @@ import os
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 
 from backend.channels.telegram_channel import TelegramChannelRuntime
 from backend.channels.whatsapp_channel import build_incoming_message_from_meta, handle_incoming_whatsapp_message
 from backend.services.db_init import inicializar_bd
+from backend.web.routes import api_router, bootstrap_web_admin, page_router
 from backend.utils import mensagem_ja_processada, registrar_mensagem_recebida
 
 load_dotenv()
@@ -34,6 +37,8 @@ logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
+BASE_DIR = Path(__file__).resolve().parent.parent
+FRONTEND_DIR = BASE_DIR / "frontend"
 telegram_runtime = TelegramChannelRuntime()
 
 if DATABASE_URL:
@@ -44,6 +49,10 @@ else:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    try:
+        bootstrap_web_admin()
+    except Exception:
+        logger.exception("Falha ao executar bootstrap web.")
     if telegram_runtime.enabled:
         await telegram_runtime.start()
     else:
@@ -55,6 +64,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.include_router(api_router)
+app.include_router(page_router)
+
+if FRONTEND_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
 
 @app.get("/ping")

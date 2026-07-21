@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fincontrol | Dashboard</title>
+  <link rel="stylesheet" href="/static/css/reset.css">
+  <link rel="stylesheet" href="/static/css/variables.css">
+  <link rel="stylesheet" href="/static/css/themes.css">
+  <link rel="stylesheet" href="/static/css/layout.css">
+  <link rel="stylesheet" href="/static/css/components.css">
+  <link rel="stylesheet" href="/static/css/forms.css">
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <link rel="stylesheet" href="/static/css/responsive.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.min.js" defer></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="page page-dashboard">
+  <div class="dashboard-shell">
+    <aside id="sidebar" class="sidebar"></aside>
+    <div class="dashboard-content">
+      <header id="topbar" class="topbar"></header>
+      <main class="dashboard-main">
+        <section class="hero-panel card">
+          <div>
+            <p class="eyebrow">Resumo executivo</p>
+            <h1>Visão geral das finanças em tempo real.</h1>
+            <p id="dashboard-summary-copy" class="hero-copy">
+              Carregando informações do usuário e do período atual...
+            </p>
+          </div>
+          <div class="hero-meta" id="period-badge"></div>
+        </section>
+
+        <section id="summary-cards" class="summary-grid"></section>
+
+        <section class="dashboard-grid">
+          <article class="card chart-card">
+            <div class="card-header">
+              <div>
+                <h2>Gastos por categoria</h2>
+                <p>Distribuição real do período selecionado.</p>
+              </div>
+            </div>
+            <canvas id="categories-chart" height="220"></canvas>
+          </article>
+
+          <article class="card chart-card">
+            <div class="card-header">
+              <div>
+                <h2>Fluxo de caixa</h2>
+                <p>Entradas e saídas consolidadas por dia.</p>
+              </div>
+            </div>
+            <canvas id="cash-flow-chart" height="220"></canvas>
+          </article>
+        </section>
+
+        <section class="dashboard-grid dashboard-grid-bottom">
+          <article class="card">
+            <div class="card-header">
+              <div>
+                <h2>Movimentações recentes</h2>
+                <p>Últimos lançamentos sincronizados do backend.</p>
+              </div>
+            </div>
+            <div id="recent-transactions" class="stack-list"></div>
+          </article>
+
+          <article class="card">
+            <div class="card-header">
+              <div>
+                <h2>Lembretes</h2>
+                <p>Organização vinculada ao agente financeiro.</p>
+              </div>
+            </div>
+            <div id="reminders-list" class="stack-list"></div>
+          </article>
+        </section>
+
+        <section class="dashboard-grid dashboard-grid-bottom">
+          <article class="card">
+            <div class="card-header">
+              <div>
+                <h2>Resumo da IA</h2>
+                <p>Interpretação automática baseada nos dados reais.</p>
+              </div>
+            </div>
+            <div id="ai-summary" class="ai-summary"></div>
+          </article>
+
+          <article class="card">
+            <div class="card-header">
+              <div>
+                <h2>Metas</h2>
+                <p>Espaço reservado para a próxima etapa do TCC.</p>
+              </div>
+            </div>
+            <div id="goals-list" class="stack-list"></div>
+          </article>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script src="/static/js/config.js"></script>
+  <script src="/static/js/utils.js"></script>
+  <script src="/static/js/api.js"></script>
+  <script src="/static/js/layout.js"></script>
+  <script src="/static/js/dashboard.js"></script>
+</body>
+</html>
