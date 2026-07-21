@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import unittest
 from types import SimpleNamespace
@@ -30,23 +29,24 @@ class HumanizedConversationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(normalize_user_text("vc consegue gerar o pdf hj?"), "você consegue gerar o pdf hoje?")
         self.assertEqual(remove_accents_for_matching("desse mês"), "desse mes")
 
-    async def test_classifier_total_expense_without_accents(self):
-        with patch.dict(os.environ, {}, clear=False):
-            result = await classify_intent(_msg("qto gastei esse mes"), {})
+    async def test_classifier_pdf_request_with_explicit_period(self):
+        result = await classify_intent(_msg("relatorio da conta desse mes"), {})
+        self.assertEqual(result.intent, "generate_financial_pdf")
+        self.assertEqual(result.parameters["period"], "current_month")
+        self.assertFalse(result.missing_fields)
+        self.assertTrue(result.should_execute)
 
+    async def test_classifier_pdf_request_natural_language(self):
+        result = await classify_intent(_msg("vc consegue gerar um pdf das minhas conta pfv"), {})
+        self.assertEqual(result.intent, "generate_financial_pdf")
+
+    async def test_classifier_total_expense_without_accents(self):
+        result = await classify_intent(_msg("qto gastei esse mes"), {})
         self.assertEqual(result.intent, "get_total_expense")
         self.assertEqual(result.parameters["period"], "current_month")
 
-    async def test_classifier_pdf_request_natural_language(self):
-        with patch.dict(os.environ, {}, clear=False):
-            result = await classify_intent(_msg("vc consegue gerar um pdf das minhas conta pfv"), {})
-
-        self.assertEqual(result.intent, "generate_financial_pdf")
-
     async def test_classifier_exchange_rate(self):
-        with patch.dict(os.environ, {}, clear=False):
-            result = await classify_intent(_msg("qual dolar hj"), {})
-
+        result = await classify_intent(_msg("qual dolar hj"), {})
         self.assertEqual(result.intent, "get_exchange_rate")
         self.assertEqual(result.parameters["currency"], "USD")
 
@@ -55,16 +55,34 @@ class HumanizedConversationTest(unittest.IsolatedAsyncioTestCase):
         session.state["pending_intent"] = "generate_financial_pdf"
         session.state["pending_parameters"] = {"format": "pdf"}
         session.state["pending_missing_fields"] = ["period"]
-        session.state["pending_clarification_question"] = "Você quer o relatório deste mês ou de outro período?"
+        session.state["pending_clarification_question"] = "Voce quer o relatorio deste mes ou de outro periodo?"
 
         resolution = await resolve_pending_intent(session, "desse mes", "desse mes")
         self.assertTrue(resolution.matched)
         self.assertEqual(resolution.parameters["period"], "current_month")
         self.assertFalse(resolution.remaining_fields)
 
+    async def test_pending_pdf_flow_question_then_resolution(self):
+        pdf_info = {"path": "/tmp/relatorio.pdf", "name": "relatorio.pdf", "period_label": "07/2026", "total": "123.45"}
+
+        with patch("backend.core.router.verificar_autorizacao", return_value=True), patch(
+            "backend.core.router.obter_schema_por_telefone",
+            return_value="schema_fin",
+        ), patch("backend.core.router.gerar_pdf_financeiro", return_value=pdf_info):
+            session = session_store.get("telegram", "123")
+            first = await route_incoming_message(_msg("quero um relatorio das minhas contas"), session)
+            self.assertIn("periodo", (first.text or "").lower())
+            self.assertEqual(session.state.get("pending_intent"), "generate_financial_pdf")
+
+            second = await route_incoming_message(_msg("desse mes"), session)
+
+        self.assertEqual(second.response_type, "document")
+        self.assertEqual(second.document_name, "relatorio.pdf")
+        self.assertIsNone(session_store.get("telegram", "123").state.get("pending_intent"))
+
     async def test_pending_pdf_flow_through_router(self):
         first = AgentResponse(
-            text="Você quer o relatório deste mês ou de outro período?",
+            text="Voce quer o relatorio deste mes ou de outro periodo?",
             metadata={"intent": "generate_financial_pdf", "pending": True},
         )
         pdf_info = {"path": "/tmp/relatorio.pdf", "name": "relatorio.pdf", "period_label": "07/2026", "total": "123.45"}
@@ -75,7 +93,7 @@ class HumanizedConversationTest(unittest.IsolatedAsyncioTestCase):
         ), patch("backend.core.router.gerar_pdf_financeiro", return_value=pdf_info), patch(
             "backend.core.router.gerar_resposta_conversacional",
             new=AsyncMock(return_value=AgentResponse(text="fallback")),
-        ), patch.dict(os.environ, {}, clear=False):
+        ):
             session = session_store.get("telegram", "123")
             session.state["pending_intent"] = "generate_financial_pdf"
             session.state["pending_parameters"] = {"format": "pdf"}
@@ -105,7 +123,7 @@ class HumanizedConversationTest(unittest.IsolatedAsyncioTestCase):
         session.state["pending_intent"] = "generate_financial_pdf"
         session.state["pending_parameters"] = {"format": "pdf"}
         session.state["pending_missing_fields"] = ["period"]
-        session.state["pending_clarification_question"] = "Você quer o relatório deste mês ou de outro período?"
+        session.state["pending_clarification_question"] = "Voce quer o relatorio deste mes ou de outro periodo?"
 
         positive = await resolve_pending_intent(session, "pode ser", "pode ser")
         self.assertEqual(positive.parameters["period"], "current_month")
@@ -113,8 +131,8 @@ class HumanizedConversationTest(unittest.IsolatedAsyncioTestCase):
         session.state["pending_intent"] = "generate_financial_pdf"
         session.state["pending_parameters"] = {"format": "pdf"}
         session.state["pending_missing_fields"] = ["period"]
-        session.state["pending_clarification_question"] = "Você quer o relatório deste mês ou de outro período?"
-        negative = await resolve_pending_intent(session, "não, do mes passado", "nao do mes passado")
+        session.state["pending_clarification_question"] = "Voce quer o relatorio deste mes ou de outro periodo?"
+        negative = await resolve_pending_intent(session, "nao, do mes passado", "nao do mes passado")
         self.assertEqual(negative.parameters["period"], "previous_month")
 
     async def test_openai_error_cai_em_fallback(self):
@@ -136,7 +154,16 @@ class HumanizedConversationTest(unittest.IsolatedAsyncioTestCase):
     async def test_process_agent_message_preserva_texto_original_e_normalizado(self):
         with patch("backend.core.router.verificar_autorizacao", return_value=True), patch(
             "backend.core.router.classify_intent",
-            new=AsyncMock(return_value=SimpleNamespace(intent="greeting", confidence=1.0, parameters={}, missing_fields=[], should_execute=True, clarification_question=None)),
+            new=AsyncMock(
+                return_value=SimpleNamespace(
+                    intent="greeting",
+                    confidence=1.0,
+                    parameters={},
+                    missing_fields=[],
+                    should_execute=True,
+                    clarification_question=None,
+                )
+            ),
         ):
             message = _msg("vc consegue gerar um pdf hj?")
             await process_agent_message(message)

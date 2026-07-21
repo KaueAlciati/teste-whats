@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from dataclasses import dataclass
 
 _ABBREVIATIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bvcs\b", flags=re.IGNORECASE), "vocês"),
@@ -46,3 +47,65 @@ def normalize_user_text(text: str) -> str:
     clean = re.sub(r"\s+", " ", clean)
     return clean.strip()
 
+
+def matching_text(text: str) -> str:
+    return remove_accents_for_matching(normalize_user_text(text))
+
+
+def extract_period(text: str) -> str | None:
+    normalized = matching_text(text)
+    if not normalized:
+        return None
+
+    current_month_tokens = {
+        "esse mes",
+        "este mes",
+        "desse mes",
+        "deste mes",
+        "do mes",
+        "mes atual",
+        "agora",
+    }
+    previous_month_tokens = {
+        "mes passado",
+        "ultimo mes",
+        "mes anterior",
+        "do mes passado",
+    }
+    current_year_tokens = {
+        "esse ano",
+        "este ano",
+        "desse ano",
+        "ano atual",
+    }
+    if any(token in normalized for token in previous_month_tokens):
+        return "previous_month"
+    if any(token in normalized for token in current_month_tokens):
+        return "current_month"
+    if any(token in normalized for token in current_year_tokens):
+        return "current_year"
+    if any(token in normalized for token in {"hoje", "hj", "de hoje"}):
+        return "today"
+    if "ontem" in normalized:
+        return "yesterday"
+    if re.search(r"\bde\s+[a-zçãõáéíóú]+\s+a\s+[a-zçãõáéíóú]+\b", normalized):
+        return "custom_period"
+    if re.search(r"\b\d{1,2}/\d{1,2}(/\d{2,4})?\b", normalized):
+        return "custom_period"
+    if re.search(r"\b\d{4}-\d{2}-\d{2}\b", normalized):
+        return "custom_period"
+    if re.search(r"\b(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\b", normalized):
+        return "custom_period"
+    return None
+
+
+@dataclass(frozen=True, slots=True)
+class TextVariants:
+    original: str
+    normalized: str
+    matching: str
+
+
+def build_text_variants(text: str) -> TextVariants:
+    normalized = normalize_user_text(text)
+    return TextVariants(original=text or "", normalized=normalized, matching=remove_accents_for_matching(normalized))

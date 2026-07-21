@@ -4,12 +4,11 @@ import json
 import logging
 import os
 import re
-from datetime import date, datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from backend.core.text_normalizer import normalize_user_text, remove_accents_for_matching
+from backend.core.text_normalizer import extract_period, matching_text, normalize_user_text
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +31,10 @@ def _session_field(session: Any, key: str, default: Any = None) -> Any:
     return default
 
 
-def _set_session_field(session: Any, key: str, value: Any) -> None:
-    if hasattr(session, "state"):
-        session.state[key] = value
-    elif isinstance(session, dict):
-        session[key] = value
+def _looks_like_cancel(text: str) -> bool:
+    normalized = matching_text(text)
+    tokens = set(normalized.split())
+    return bool(tokens & {"cancelar", "cancela", "parar", "stop", "sair", "esquecer", "deixa"})
 
 
 def _merge_parameters(session: Any) -> dict[str, Any]:
@@ -45,82 +43,16 @@ def _merge_parameters(session: Any) -> dict[str, Any]:
     return collected
 
 
-def _looks_like_cancel(text: str) -> bool:
-    normalized = remove_accents_for_matching(normalize_user_text(text))
-    tokens = set(normalized.split())
-    return bool(tokens & {"cancelar", "cancela", "parar", "stop", "sair", "esquecer", "deixa"})
-
-
-def _detect_period(text: str) -> str | None:
-    normalized = remove_accents_for_matching(normalize_user_text(text))
-
-    current_month_tokens = {
-        "esse mes",
-        "este mes",
-        "desse mes",
-        "deste mes",
-        "do mes",
-        "mes atual",
-        "mes deste",
-        "agora",
-        "esse mês",
-        "este mês",
-        "desse mês",
-        "deste mês",
-        "do mês",
-        "mês atual",
-    }
-    previous_month_tokens = {
-        "mes passado",
-        "ultimo mes",
-        "último mês",
-        "ultimo mês",
-        "mês passado",
-        "mes anterior",
-        "do mes passado",
-        "do mês passado",
-    }
-    current_year_tokens = {
-        "esse ano",
-        "este ano",
-        "ano atual",
-        "desse ano",
-        "deste ano",
-    }
-    today_tokens = {"hoje", "hj", "de hoje"}
-    yesterday_tokens = {"ontem"}
-
-    if any(token in normalized for token in previous_month_tokens):
-        return "previous_month"
-    if any(token in normalized for token in current_month_tokens):
-        return "current_month"
-    if any(token in normalized for token in current_year_tokens):
-        return "current_year"
-    if any(token in normalized for token in today_tokens):
-        return "today"
-    if any(token in normalized for token in yesterday_tokens):
-        return "yesterday"
-
-    if re.search(r"\bde\s+[a-zçãõáéíóú]+\s+a\s+[a-zçãõáéíóú]+\b", normalized):
-        return "custom_period"
-    if re.search(r"\b\d{1,2}/\d{1,2}(/\d{2,4})?\b", normalized):
-        return "custom_period"
-    if re.search(r"\b\d{4}-\d{2}-\d{2}\b", normalized):
-        return "custom_period"
-    if re.search(r"\b(janeiro|fevereiro|marco|março|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\b", normalized):
-        return "custom_period"
-    return None
-
-
-def _resolve_pdf_period(session: Any, text: str, normalized_text: str, collected: dict[str, Any]) -> PendingResolution:
-    period = _detect_period(text) or _detect_period(normalized_text)
+def _resolve_pdf_period(session: Any, original_text: str, normalized_text: str, collected: dict[str, Any]) -> PendingResolution:
+    period = extract_period(original_text) or extract_period(normalized_text)
     if period:
         collected["period"] = period
+        collected["format"] = collected.get("format") or "pdf"
         return PendingResolution(matched=True, parameters=collected, remaining_fields=[])
 
-    simple_tokens = set(remove_accents_for_matching(normalized_text).split())
-    normalized_phrase = remove_accents_for_matching(normalized_text)
-    if simple_tokens & {"sim", "isso", "esse", "desse", "pode", "beleza", "blz"} or normalized_phrase in {
+    match_text = matching_text(normalized_text)
+    simple_tokens = set(match_text.split())
+    if simple_tokens & {"sim", "isso", "esse", "desse", "pode", "beleza", "blz"} or match_text in {
         "pode ser",
         "pode gerar",
         "gera agora",
@@ -128,70 +60,66 @@ def _resolve_pdf_period(session: Any, text: str, normalized_text: str, collected
         "gerar",
     }:
         collected["period"] = "current_month"
-        return PendingResolution(matched=True, parameters=collected, remaining_fields=[])
-    if simple_tokens & {"nao", "outro"}:
-        collected["period"] = "previous_month"
+        collected["format"] = collected.get("format") or "pdf"
         return PendingResolution(matched=True, parameters=collected, remaining_fields=[])
 
-    question = _session_field(session, "pending_clarification_question") or "Você quer o relatório deste mês ou de outro período?"
+    if simple_tokens & {"nao", "outro", "do outro"}:
+        collected["period"] = "previous_month"
+        collected["format"] = collected.get("format") or "pdf"
+        return PendingResolution(matched=True, parameters=collected, remaining_fields=[])
+
+    question = _session_field(session, "pending_clarification_question") or "Voce quer o relatorio deste mes ou de outro periodo?"
     return PendingResolution(matched=False, parameters=collected, remaining_fields=["period"], clarification_question=question)
 
 
-def _resolve_graphic_quote(text: str, normalized_text: str, collected: dict[str, Any]) -> PendingResolution:
-    normalized = remove_accents_for_matching(normalized_text)
-    raw = remove_accents_for_matching(text)
-
-    measurement_match = re.search(r"\b(\d{1,4})\s*(?:x|por|by|×)\s*(\d{1,4})\b", normalized)
+def _resolve_graphic_quote(original_text: str, normalized_text: str, collected: dict[str, Any]) -> PendingResolution:
+    match_text = matching_text(normalized_text)
+    measurement_match = re.search(r"\b(\d{1,4})\s*(?:x|por|x|by)\s*(\d{1,4})\b", match_text)
     if measurement_match:
         collected["measurement"] = f"{measurement_match.group(1)}x{measurement_match.group(2)}"
-    elif "measurement" not in collected:
-        if re.search(r"\b\d{1,4}\s*[x×]\s*\d{1,4}\b", raw):
-            collected["measurement"] = re.search(r"\b\d{1,4}\s*[x×]\s*\d{1,4}\b", raw).group(0).replace(" × ", "x").replace(" ", "")
 
-    quantity_match = re.search(r"\b(\d+)\s*(?:un|unid|unidades|pcs|pçs|pecas|peças)\b", normalized)
-    if quantity_match:
-        collected["quantity"] = int(quantity_match.group(1))
-    elif "quantity" not in collected and re.fullmatch(r"\d+", normalized.strip()):
-        collected["quantity"] = int(normalized.strip())
+    if not collected.get("quantity"):
+        quantity_match = re.search(r"\b(\d+)\s*(?:un|unid|unidades|pecas|pcs)\b", match_text)
+        if quantity_match:
+            collected["quantity"] = int(quantity_match.group(1))
+        elif match_text.isdigit():
+            collected["quantity"] = int(match_text)
 
     remaining: list[str] = []
-    if "measurement" not in collected:
+    if not collected.get("measurement"):
         remaining.append("measurement")
-    if "quantity" not in collected:
-        remaining.append("quantity") if "measurement" in collected else None
+    if collected.get("measurement") and not collected.get("quantity"):
+        remaining.append("quantity")
 
     if not remaining:
         return PendingResolution(matched=True, parameters=collected, remaining_fields=[])
 
-    if "measurement" in remaining:
-        question = "Certo. Qual seria a medida aproximada?"
-    else:
-        question = "Beleza. Quantas unidades você precisa?"
-    return PendingResolution(matched=True, parameters=collected, remaining_fields=remaining, clarification_question=question)
+    clarification = "Certo. Qual seria a medida aproximada?" if "measurement" in remaining else "Beleza. Quantas unidades voce precisa?"
+    return PendingResolution(matched=True, parameters=collected, remaining_fields=remaining, clarification_question=clarification)
 
 
-def _resolve_reminder(text: str, normalized_text: str, collected: dict[str, Any]) -> PendingResolution:
-    normalized = remove_accents_for_matching(normalized_text)
-    if _looks_like_cancel(text):
+def _resolve_reminder(original_text: str, normalized_text: str, collected: dict[str, Any]) -> PendingResolution:
+    match_text = matching_text(normalized_text)
+    if _looks_like_cancel(original_text):
         return PendingResolution(matched=True, cancel_intent=True, parameters=collected, remaining_fields=[])
-    if any(token in normalized for token in {"hoje", "hj"}):
-        collected["date"] = "today"
-    elif any(token in normalized for token in {"amanha", "amanhã", "depois de amanha", "depois de amanhã"}):
-        collected["date"] = "tomorrow"
-    elif "ontem" in normalized:
-        collected["date"] = "yesterday"
 
-    time_match = re.search(r"\b(\d{1,2})(?:[:h](\d{1,2}))?\b", normalized)
+    if "today" in (extract_period(original_text), extract_period(normalized_text), extract_period(match_text)):
+        collected["date"] = "today"
+    elif "yesterday" in (extract_period(original_text), extract_period(normalized_text), extract_period(match_text)):
+        collected["date"] = "yesterday"
+    elif "amanha" in match_text:
+        collected["date"] = "tomorrow"
+
+    time_match = re.search(r"\b(\d{1,2})(?:[:h](\d{1,2}))?\b", match_text)
     if time_match and not collected.get("time"):
-        hour = time_match.group(1)
-        minute = time_match.group(2) or "00"
-        collected["time"] = f"{int(hour):02d}:{int(minute):02d}"
+        collected["time"] = f"{int(time_match.group(1)):02d}:{int(time_match.group(2) or '00'):02d}"
 
     remaining = [field for field in ("text", "date", "time") if not collected.get(field)]
     if not remaining:
         return PendingResolution(matched=True, parameters=collected, remaining_fields=[])
-    question = "Certo. Para quando você quer esse lembrete?" if "date" in remaining else "Qual horário você quer para o lembrete?"
-    return PendingResolution(matched=True, parameters=collected, remaining_fields=remaining, clarification_question=question)
+
+    clarification = "Certo. Para quando voce quer esse lembrete?" if "date" in remaining else "Qual horario voce quer para o lembrete?"
+    return PendingResolution(matched=True, parameters=collected, remaining_fields=remaining, clarification_question=clarification)
 
 
 async def _resolve_with_ai(session: Any, original_text: str, normalized_text: str, collected: dict[str, Any]) -> PendingResolution:
@@ -209,12 +137,12 @@ async def _resolve_with_ai(session: Any, original_text: str, normalized_text: st
         {
             "role": "system",
             "content": (
-                "Você completa uma intenção pendente com base na resposta curta do usuário.\n"
-                "Retorne apenas JSON válido com: matched, parameters, remaining_fields, clarification_question, cancel_intent.\n"
-                "Não invente campos fora dos já existentes.\n"
-                "Se a resposta resolver a pendência, matched deve ser true.\n"
+                "Voce completa uma intencao pendente com base na resposta curta do usuario.\n"
+                "Retorne apenas JSON valido com: matched, parameters, remaining_fields, clarification_question, cancel_intent.\n"
+                "Nao invente campos fora dos ja existentes.\n"
+                "Se a resposta resolver a pendencia, matched deve ser true.\n"
                 "Se faltar dado, matched pode ser false e clarification_question deve ser curta.\n"
-                "Se o usuário estiver cancelando, use cancel_intent true."
+                "Se o usuario estiver cancelando, use cancel_intent true."
             ),
         },
         {
@@ -227,10 +155,7 @@ async def _resolve_with_ai(session: Any, original_text: str, normalized_text: st
                 f"contexto_recente:\n{summary or '(vazio)'}"
             ),
         },
-        {
-            "role": "user",
-            "content": f"texto_original={original_text}\ntexto_normalizado={normalized_text}",
-        },
+        {"role": "user", "content": f"texto_original={original_text}\ntexto_normalizado={normalized_text}"},
     ]
 
     try:
@@ -247,7 +172,7 @@ async def _resolve_with_ai(session: Any, original_text: str, normalized_text: st
         parsed = json.loads(raw)
         return PendingResolution.model_validate(parsed)
     except Exception as exc:
-        logger.exception("Falha ao resolver intenção pendente via IA: %s", exc)
+        logger.exception("Falha ao resolver intencao pendente via IA: %s", exc)
         return PendingResolution(matched=False, parameters=collected, remaining_fields=list(missing_fields))
 
 
@@ -285,3 +210,4 @@ async def resolve_pending_intent(session: Any, original_text: str, normalized_te
             ai_resolution.parameters = {**collected, **ai_resolution.parameters}
         return ai_resolution
     return fallback
+

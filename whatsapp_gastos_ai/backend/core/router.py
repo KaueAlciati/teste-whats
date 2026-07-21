@@ -9,7 +9,7 @@ from backend.core.models import AgentResponse, IncomingMessage
 from backend.core.pending_intent_resolver import PendingResolution, resolve_pending_intent
 from backend.core.sessions import SessionData, session_store
 from backend.core.intent_classifier import IntentResult, classify_intent
-from backend.core.text_normalizer import normalize_user_text, remove_accents_for_matching
+from backend.core.text_normalizer import build_text_variants, extract_period, normalize_user_text, remove_accents_for_matching
 from backend.services.api_service import (
     CONVERSOES,
     MOEDAS,
@@ -42,6 +42,68 @@ def _normalizar_texto(texto: str) -> str:
 
 def _question_key(texto: str | None) -> str:
     return _normalizar_texto(texto or "")
+
+
+def _recalcular_resultado_deterministico(message: IncomingMessage, resultado: IntentResult, session: SessionData) -> IntentResult:
+    if not isinstance(resultado, IntentResult):
+        resultado = IntentResult.model_validate(
+            {
+                "intent": getattr(resultado, "intent", "unknown"),
+                "confidence": getattr(resultado, "confidence", 0.0),
+                "parameters": getattr(resultado, "parameters", {}) or {},
+                "missing_fields": getattr(resultado, "missing_fields", []) or [],
+                "should_execute": getattr(resultado, "should_execute", False),
+                "clarification_question": getattr(resultado, "clarification_question", None),
+            }
+        )
+    texto_original = message.text or ""
+    variantes = build_text_variants(texto_original)
+    params = dict(session.state.get("collected_parameters") or {})
+    params.update(resultado.parameters or {})
+
+    if resultado.intent == "generate_financial_pdf":
+        params["format"] = params.get("format") or "pdf"
+        period = params.get("period") or extract_period(variantes.original) or extract_period(variantes.normalized) or extract_period(variantes.matching)
+        if period:
+            params["period"] = period
+
+    if resultado.intent == "get_total_expense":
+        params["period"] = params.get("period") or extract_period(variantes.original) or extract_period(variantes.normalized) or extract_period(variantes.matching) or "current_month"
+
+    required_fields = {
+        "generate_financial_pdf": ["period"],
+        "register_expense": ["value"],
+        "create_reminder": ["text", "date", "time"],
+        "delete_reminder": ["id"],
+        "get_route": ["destination"],
+    }
+    missing_fields = [field for field in required_fields.get(resultado.intent, []) if not params.get(field)]
+    should_execute = resultado.should_execute and not missing_fields
+    if resultado.intent in {"generate_financial_pdf", "get_total_expense"} and not missing_fields:
+        should_execute = True
+
+    resultado = resultado.model_copy(
+        update={
+            "parameters": params,
+            "missing_fields": missing_fields,
+            "should_execute": should_execute,
+            "clarification_question": None if not missing_fields else resultado.clarification_question,
+        }
+    )
+    logger.info(
+        "Intent=%s parameters=%s missing=%s pending=%s",
+        resultado.intent,
+        resultado.parameters,
+        resultado.missing_fields,
+        session.state.get("pending_intent"),
+    )
+    logger.info(
+        "Texto normalizado=%r matching=%r periodo=%r",
+        variantes.normalized,
+        variantes.matching,
+        params.get("period"),
+    )
+    return resultado
 
 
 def _ajustar_pergunta_repetida(session: SessionData, question: str, field: str | None = None) -> str:
@@ -488,6 +550,7 @@ def _converter_periodo_para_cron(periodo: str | None, horario: str | None) -> st
 async def _responder_intencao_classificada(message: IncomingMessage, session: SessionData, resultado: IntentResult) -> AgentResponse:
     telefone = message.user_id
     texto_original = (message.text or "").strip()
+    resultado = _recalcular_resultado_deterministico(message, resultado, session)
     params = dict(session.state.get("collected_parameters") or {})
     params.update(resultado.parameters or {})
 
@@ -712,7 +775,15 @@ async def _responder_intencao_classificada(message: IncomingMessage, session: Se
 async def _processar_texto_financeiro(message: IncomingMessage, session: SessionData) -> AgentResponse:
     texto_original = (message.text or "").strip()
     texto_normalizado = _normalizar_texto(texto_original)
+    variantes = build_text_variants(texto_original)
     telefone = message.user_id
+
+    logger.info(
+        "Texto normalizado=%r matching=%r periodo=%r",
+        variantes.normalized,
+        variantes.matching,
+        extract_period(variantes.original),
+    )
 
     schema = session.state.get("schema") or obter_schema_por_telefone(telefone)
     if schema:
