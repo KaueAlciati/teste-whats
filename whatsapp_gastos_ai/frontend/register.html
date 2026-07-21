@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fincontrol | Cadastro</title>
+  <link rel="stylesheet" href="/static/css/reset.css">
+  <link rel="stylesheet" href="/static/css/variables.css">
+  <link rel="stylesheet" href="/static/css/themes.css">
+  <link rel="stylesheet" href="/static/css/layout.css">
+  <link rel="stylesheet" href="/static/css/components.css">
+  <link rel="stylesheet" href="/static/css/forms.css">
+  <link rel="stylesheet" href="/static/css/responsive.css">
+</head>
+<body class="page page-auth">
+  <main class="auth-shell">
+    <section class="auth-hero">
+      <div class="brand-mark">FC</div>
+      <p class="eyebrow">Cadastro seguro</p>
+      <h1>Crie sua conta para acessar o painel, Telegram e relatórios no mesmo lugar.</h1>
+      <p class="hero-copy">
+        O cadastro prepara seu espaço financeiro, mantendo tudo organizado para o TCC e para os canais de atendimento.
+      </p>
+      <ul class="hero-points">
+        <li>Conta web com e-mail e telefone únicos</li>
+        <li>Senha com hash seguro</li>
+        <li>Base pronta para vincular Telegram depois</li>
+      </ul>
+    </section>
+
+    <section class="auth-card card">
+      <div class="card-header">
+        <h2>Criar conta</h2>
+        <p>Preencha os dados abaixo para começar.</p>
+      </div>
+
+      <form id="register-form" class="form-grid">
+        <label class="field">
+          <span>Nome completo</span>
+          <input id="name" name="name" type="text" autocomplete="name" required>
+        </label>
+
+        <label class="field">
+          <span>E-mail</span>
+          <input id="email" name="email" type="email" autocomplete="email" required>
+        </label>
+
+        <label class="field">
+          <span>Telefone</span>
+          <input id="phone" name="phone" type="tel" autocomplete="tel" placeholder="5515992013795" required>
+        </label>
+
+        <label class="field">
+          <span>Senha</span>
+          <input id="password" name="password" type="password" autocomplete="new-password" minlength="8" required>
+        </label>
+
+        <label class="field">
+          <span>Confirmar senha</span>
+          <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" required>
+        </label>
+
+        <label class="check-row">
+          <input id="accept_terms" name="accept_terms" type="checkbox" required>
+          <span>Aceito os termos de uso</span>
+        </label>
+
+        <button id="register-button" type="submit" class="btn btn-primary btn-block">Criar conta</button>
+        <p id="register-feedback" class="feedback"></p>
+        <p class="muted-link">Já possui conta? <a href="/login">Entrar</a></p>
+      </form>
+    </section>
+  </main>
+
+  <script src="/static/js/config.js"></script>
+  <script src="/static/js/utils.js"></script>
+  <script src="/static/js/api.js"></script>
+  <script src="/static/js/register.js"></script>
+</body>
+</html>

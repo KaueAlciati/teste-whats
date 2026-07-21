@@ -27,6 +27,7 @@ def _normalizar_content(content: Any, metadata: dict[str, Any] | None = None) ->
 def salvar_mensagem_conversa(
     user_id: str,
     channel: str,
+    channel_user_id: str | None,
     direction: str,
     message_type: str,
     content: Any,
@@ -40,10 +41,10 @@ def salvar_mensagem_conversa(
         cursor = conn.cursor()
         cursor.execute(
             """
-            INSERT INTO conversation_messages (user_id, channel, direction, message_type, content)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO conversation_messages (user_id, channel, channel_user_id, direction, message_type, content)
+            VALUES (%s, %s, %s, %s, %s, %s)
             """,
-            (user_id, channel, direction, message_type, texto),
+            (user_id, channel, channel_user_id, direction, message_type, texto),
         )
         conn.commit()
         logger.info("Histórico salvo [%s] %s/%s", direction, channel, user_id)

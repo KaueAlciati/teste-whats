@@ -42,8 +42,9 @@ async def process_agent_message(message: IncomingMessage) -> AgentResponse:
         },
     )
     salvar_mensagem_conversa(
-        session.session_id,
+        session.user_id,
         message.channel,
+        message.channel_user_id,
         "user",
         message.message_type,
         conteudo_usuario,
@@ -67,8 +68,9 @@ async def process_agent_message(message: IncomingMessage) -> AgentResponse:
         metadata=response.metadata,
     )
     salvar_mensagem_conversa(
-        session.session_id,
+        session.user_id,
         message.channel,
+        message.channel_user_id,
         "assistant",
         response.response_type,
         conteudo_assistente,

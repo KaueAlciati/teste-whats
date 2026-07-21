@@ -50,6 +50,7 @@ def build_incoming_message_from_meta(payload: dict[str, Any]) -> IncomingMessage
             text=text,
             media_id=media_id,
             file_name=file_name,
+            channel_user_id=f"whatsapp:{user_id}",
             raw_payload=payload,
             metadata={"message_id": message.get("id"), "timestamp": message.get("timestamp")},
         )

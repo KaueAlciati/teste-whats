@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
@@ -12,13 +13,20 @@ from backend.services.web_auth_service import (
     ACCESS_COOKIE,
     REFRESH_COOKIE,
     SESSION_COOKIE,
+    create_channel_link_code,
     authenticate_web_user,
     bootstrap_web_admin,
     build_avatar_label,
     fetch_user_by_id,
     get_user_from_access_token,
+    get_channel_link_status,
+    register_web_user,
+    request_email_verification_for_user,
+    resolve_channel_link,
     refresh_session,
     revoke_session,
+    unlink_channel,
+    verify_email_token,
     safe_user_dict,
 )
 
@@ -34,6 +42,20 @@ class LoginRequest(BaseModel):
     identifier: str = Field(min_length=3)
     password: str = Field(min_length=4)
     remember_me: bool = False
+
+
+class RegisterRequest(BaseModel):
+    name: str = Field(min_length=3)
+    email: str = Field(min_length=5)
+    phone: str = Field(min_length=8)
+    password: str = Field(min_length=8)
+    confirm_password: str = Field(min_length=8)
+    accept_terms: bool = False
+
+
+class VerifyEmailRequest(BaseModel):
+    email: str = Field(min_length=5)
+    token: str = Field(min_length=8)
 
 
 def _api_success(data, message: str | None = None, status_code: int = 200) -> JSONResponse:
@@ -100,6 +122,11 @@ async def login_page():
     return _frontend_file("login.html")
 
 
+@page_router.get("/register")
+async def register_page():
+    return _frontend_file("register.html")
+
+
 @page_router.get("/dashboard")
 async def dashboard_page(request: Request):
     access_token = request.cookies.get(ACCESS_COOKIE)
@@ -108,6 +135,18 @@ async def dashboard_page(request: Request):
     try:
         get_user_from_access_token(access_token)
         return _frontend_file("dashboard.html")
+    except Exception:
+        return RedirectResponse(url="/login", status_code=302)
+
+
+@page_router.get("/configuracoes")
+async def configuracoes_page(request: Request):
+    access_token = request.cookies.get(ACCESS_COOKIE)
+    if not access_token:
+        return RedirectResponse(url="/login", status_code=302)
+    try:
+        get_user_from_access_token(access_token)
+        return _frontend_file("configuracoes.html")
     except Exception:
         return RedirectResponse(url="/login", status_code=302)
 
@@ -164,6 +203,30 @@ async def login(request: Request, payload: LoginRequest):
     return response
 
 
+@api_router.post("/auth/register")
+async def register(payload: RegisterRequest):
+    if not payload.accept_terms:
+        return _api_error("Você precisa aceitar os termos para criar a conta.", status_code=400)
+    if payload.password != payload.confirm_password:
+        return _api_error("A confirmação de senha não confere.", status_code=400)
+    try:
+        user = register_web_user(payload.name, payload.email, payload.phone, payload.password)
+    except ValueError as exc:
+        return _api_error(str(exc), status_code=400)
+    except Exception:
+        logger.exception("Falha ao registrar usuário web.")
+        return _api_error("Não foi possível criar a conta agora.", status_code=500)
+
+    return _api_success(
+        {
+            "user_id": user.id,
+            "email": user.email,
+            "phone": user.telefone,
+        },
+        "Conta criada com sucesso.",
+    )
+
+
 @api_router.post("/auth/refresh")
 async def refresh(request: Request):
     refresh_token = request.cookies.get(REFRESH_COOKIE)
@@ -200,6 +263,33 @@ async def refresh(request: Request):
     return response
 
 
+@api_router.post("/auth/request-email-verification")
+async def request_email_verification(request: Request):
+    user = _current_user_from_request(request)
+    try:
+        result = request_email_verification_for_user(user.id)
+    except Exception:
+        logger.exception("Falha ao solicitar verificação de e-mail.")
+        return _api_error("Não foi possível gerar a verificação agora.", status_code=500)
+
+    payload = {"expires_at": result["expires_at"].isoformat()}
+    if os.getenv("APP_ENV", "development").lower() != "production":
+        payload["debug_token"] = result["token"]
+    return _api_success(payload, "Verificação de e-mail solicitada.")
+
+
+@api_router.post("/auth/verify-email")
+async def verify_email(payload: VerifyEmailRequest):
+    try:
+        verified = verify_email_token(payload.email, payload.token)
+    except Exception:
+        logger.exception("Falha ao verificar e-mail.")
+        return _api_error("Não foi possível confirmar o e-mail agora.", status_code=500)
+    if not verified:
+        return _api_error("Token inválido ou expirado.", status_code=400)
+    return _api_success({}, "E-mail confirmado com sucesso.")
+
+
 @api_router.post("/auth/logout")
 async def logout(request: Request):
     refresh_token = request.cookies.get(REFRESH_COOKIE)
@@ -211,6 +301,48 @@ async def logout(request: Request):
     response = _api_success({}, "Logout realizado.")
     _clear_auth_cookies(response)
     return response
+
+
+@api_router.get("/integrations/telegram/status")
+async def telegram_status(request: Request):
+    user = _current_user_from_request(request)
+    return _api_success(get_channel_link_status(user.id, "telegram"), None)
+
+
+@api_router.post("/integrations/telegram/code")
+async def telegram_link_code(request: Request):
+    user = _current_user_from_request(request)
+    status_info = get_channel_link_status(user.id, "telegram")
+    if status_info.get("linked"):
+        return _api_success(status_info, "Telegram já vinculado.")
+    try:
+        result = create_channel_link_code(user.id, "telegram")
+    except Exception:
+        logger.exception("Falha ao gerar código Telegram.")
+        return _api_error("Não foi possível gerar o código agora.", status_code=500)
+    return _api_success(
+        {
+            "linked": False,
+            "pending": True,
+            "code": result["code"],
+            "expires_at": result["expires_at"].isoformat(),
+            "channel": "telegram",
+        },
+        "Código gerado com sucesso.",
+    )
+
+
+@api_router.delete("/integrations/telegram")
+async def telegram_unlink(request: Request):
+    user = _current_user_from_request(request)
+    try:
+        removed = unlink_channel(user.id, "telegram")
+    except Exception:
+        logger.exception("Falha ao desvincular Telegram.")
+        return _api_error("Não foi possível desvincular agora.", status_code=500)
+    if not removed:
+        return _api_error("Nenhum vínculo encontrado.", status_code=404)
+    return _api_success({}, "Telegram desvinculado com sucesso.")
 
 
 @api_router.get("/auth/me")

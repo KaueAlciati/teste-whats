@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 import unittest
 import os
 from unittest.mock import patch
@@ -66,6 +67,25 @@ class WebStage1Test(unittest.TestCase):
         self.assertIn("fc_access_token", response.cookies)
         self.assertIn("fc_refresh_token", response.cookies)
 
+    def test_register_endpoint_creates_account_payload(self) -> None:
+        with patch("backend.web.routes.register_web_user", return_value=_user()) as mocked:
+            response = self.client.post(
+                "/api/auth/register",
+                json={
+                    "name": "Admin Fincontrol",
+                    "email": "admin@fincontrol.local",
+                    "phone": "5511999999999",
+                    "password": "senha1234",
+                    "confirm_password": "senha1234",
+                    "accept_terms": True,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["success"])
+        self.assertEqual(response.json()["data"]["user_id"], 1)
+        mocked.assert_called_once()
+
     def test_me_requires_authentication(self) -> None:
         response = self.client.get("/api/auth/me")
         self.assertEqual(response.status_code, 401)
@@ -113,10 +133,32 @@ class WebStage1Test(unittest.TestCase):
         self.assertEqual(response.json()["data"][0]["label"], "Mercado")
 
     def test_login_and_dashboard_pages_exist(self) -> None:
-        response_login = self.client.get("/login")
-        response_dashboard = self.client.get("/dashboard")
+        with patch("backend.web.routes.get_user_from_access_token", return_value=_user()):
+            self.client.cookies.set("fc_access_token", "access.token")
+            response_login = self.client.get("/login")
+            response_register = self.client.get("/register")
+            response_dashboard = self.client.get("/dashboard")
+            response_config = self.client.get("/configuracoes")
         self.assertEqual(response_login.status_code, 200)
         self.assertEqual(response_dashboard.status_code, 200)
+        self.assertEqual(response_register.status_code, 200)
+        self.assertEqual(response_config.status_code, 200)
+
+    def test_telegram_link_endpoints_return_status(self) -> None:
+        with patch("backend.web.routes.get_user_from_access_token", return_value=_user()), patch(
+            "backend.web.routes.get_channel_link_status",
+            return_value={"linked": False, "pending": False, "channel": "telegram"},
+        ), patch(
+            "backend.web.routes.create_channel_link_code",
+            return_value={"code": "482731", "expires_at": datetime(2026, 7, 21)},
+        ):
+            self.client.cookies.set("fc_access_token", "access.token")
+            response_status = self.client.get("/api/integrations/telegram/status")
+            response_code = self.client.post("/api/integrations/telegram/code")
+
+        self.assertEqual(response_status.status_code, 200)
+        self.assertEqual(response_code.status_code, 200)
+        self.assertEqual(response_code.json()["data"]["code"], "482731")
 
 
 if __name__ == "__main__":

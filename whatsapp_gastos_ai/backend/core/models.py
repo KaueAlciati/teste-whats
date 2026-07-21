@@ -15,6 +15,7 @@ class IncomingMessage:
     media_id: Optional[str] = None
     media_url: Optional[str] = None
     file_name: Optional[str] = None
+    channel_user_id: Optional[str] = None
     raw_payload: Optional[dict[str, Any]] = None
     metadata: dict[str, Any] = field(default_factory=dict)
 

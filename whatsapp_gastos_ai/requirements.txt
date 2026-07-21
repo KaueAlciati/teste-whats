@@ -11,6 +11,7 @@ psycopg2-binary==2.9.9
 
 # Ambiente e variáveis
 python-dotenv==1.0.1
+bcrypt==4.2.1
 
 # Machine Learning e NLP
 spacy==3.7.2

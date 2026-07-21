@@ -15,6 +15,7 @@ window.FincontrolLayout = (() => {
         <a class="pill" href="#recent-transactions">Movimentações</a>
         <a class="pill" href="#reminders-list">Lembretes</a>
         <a class="pill" href="#ai-summary">Resumo IA</a>
+        <a class="pill" href="/configuracoes">Configurações</a>
       </nav>
 
       <div style="margin-top:auto;display:grid;gap:14px;">

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fincontrol | Configurações</title>
+  <link rel="stylesheet" href="/static/css/reset.css">
+  <link rel="stylesheet" href="/static/css/variables.css">
+  <link rel="stylesheet" href="/static/css/themes.css">
+  <link rel="stylesheet" href="/static/css/layout.css">
+  <link rel="stylesheet" href="/static/css/components.css">
+  <link rel="stylesheet" href="/static/css/forms.css">
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <link rel="stylesheet" href="/static/css/responsive.css">
+</head>
+<body class="page page-dashboard">
+  <div class="dashboard-shell">
+    <aside id="sidebar" class="sidebar"></aside>
+    <div class="dashboard-content">
+      <header id="topbar" class="topbar"></header>
+      <main class="dashboard-main">
+        <section class="hero-panel card">
+          <div>
+            <p class="eyebrow">Configurações</p>
+            <h1>Conta e integrações.</h1>
+            <p id="config-summary" class="hero-copy">Carregando dados da conta...</p>
+          </div>
+          <div class="hero-meta">
+            <strong id="config-status-badge">-</strong>
+            <span id="config-status-text">-</span>
+          </div>
+        </section>
+
+        <section class="dashboard-grid">
+          <article class="card">
+            <div class="card-header">
+              <div>
+                <h2>Conta</h2>
+                <p>Dados principais do usuário autenticado.</p>
+              </div>
+            </div>
+            <div id="account-card" class="stack-list"></div>
+          </article>
+
+          <article class="card">
+            <div class="card-header">
+              <div>
+                <h2>Integrações</h2>
+                <p>Vínculo seguro com o Telegram.</p>
+              </div>
+            </div>
+            <div id="telegram-card" class="stack-list"></div>
+          </article>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script src="/static/js/config.js"></script>
+  <script src="/static/js/utils.js"></script>
+  <script src="/static/js/api.js"></script>
+  <script src="/static/js/layout.js"></script>
+  <script src="/static/js/configuracoes.js"></script>
+</body>
+</html>

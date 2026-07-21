@@ -28,20 +28,32 @@ Assistente financeiro multicanal para WhatsApp e Telegram, com backend em FastAP
 ## Interface Web do TCC
 - Frontend em HTML/CSS/JS puro, servido pelo mesmo FastAPI
 - Login com cookie HttpOnly e dashboard com dados reais do PostgreSQL
+- Cadastro web com e-mail, telefone e senha
+- Página de configurações para vínculo do Telegram
 - Rotas principais:
   - `/login`
+  - `/register`
   - `/dashboard`
+  - `/configuracoes`
   - `/api/auth/me`
+  - `/api/auth/register`
+  - `/api/auth/request-email-verification`
+  - `/api/auth/verify-email`
   - `/api/dashboard/summary`
   - `/api/dashboard/categories`
   - `/api/dashboard/cash-flow`
   - `/api/dashboard/recent-transactions`
+  - `/api/integrations/telegram/status`
+  - `/api/integrations/telegram/code`
+  - `/api/integrations/telegram`
 - Variáveis principais:
   - `WEB_JWT_SECRET`
   - `WEB_ADMIN_PHONE`
   - `WEB_ADMIN_EMAIL`
   - `WEB_ADMIN_PASSWORD`
   - `WEB_ADMIN_NAME`
+  - `WEB_ACCESS_TOKEN_MINUTES`
+  - `WEB_REFRESH_TOKEN_DAYS`
 - O Telegram e o WhatsApp continuam funcionando no mesmo backend; a web é apenas mais um canal de visualização e gestão.
 
 ## Execução
