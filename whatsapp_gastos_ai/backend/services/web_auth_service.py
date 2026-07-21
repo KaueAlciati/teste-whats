@@ -125,11 +125,12 @@ def _password_hash(password: str, salt_b64: str | None = None) -> tuple[str, str
     return digest.hex(), _b64url_encode(salt)
 
 
-def hash_password(password: str) -> tuple[str, str]:
-    return _password_hash(password)
+def hash_password(password: str) -> str:
+    hashed, _ = _password_hash(password)
+    return hashed
 
 
-def verify_password(password: str, salt_b64: str, expected_hash: str) -> bool:
+def verify_password(password: str, expected_hash: str, salt_b64: str | None = None) -> bool:
     if bcrypt is not None and expected_hash and expected_hash.startswith("$2"):
         try:
             return bcrypt.checkpw(password.encode("utf-8"), expected_hash.encode("utf-8"))
@@ -228,8 +229,7 @@ def upsert_web_user(
     if not phone:
         raise ValueError("Telefone é obrigatório para vincular o usuário ao schema financeiro.")
 
-    liberar_usuario(name or "Fincontrol", phone)
-    password_hash, salt = hash_password(password)
+    password_hash = hash_password(password)
     normalized_phone = normalize_phone_number(phone) or phone
 
     conn = None
@@ -247,7 +247,7 @@ def upsert_web_user(
                 phone = COALESCE(%s, phone),
                 senha_hash = %s,
                 password_hash = %s,
-                senha_salt = %s,
+                senha_salt = NULL,
                 web_active = true,
                 is_active = true,
                 web_role = %s,
@@ -258,7 +258,7 @@ def upsert_web_user(
                 updated_at = NOW()
             WHERE telefone = %s
             """,
-            (name, name, email, normalized_phone, normalized_phone, password_hash, password_hash, salt, role, schema, normalized_phone),
+            (name, name, email, normalized_phone, normalized_phone, password_hash, password_hash, role, schema, normalized_phone),
         )
         conn.commit()
         cursor.execute(
@@ -318,9 +318,11 @@ def normalize_phone_number(phone: str | None) -> str | None:
         return None
     if digits.startswith("00"):
         digits = digits[2:]
-    if len(digits) in {10, 11} and not digits.startswith("55"):
-        digits = f"55{digits}"
-    return digits
+    if digits.startswith("55") and len(digits) in {12, 13}:
+        return digits
+    if len(digits) in {10, 11}:
+        return f"55{digits}"
+    return None
 
 
 def _normalize_email(email: str | None) -> str | None:
@@ -473,7 +475,7 @@ def register_web_user(name: str, email: str, phone: str, password: str) -> WebUs
         if cursor.fetchone():
             raise ValueError("Conta já cadastrada.")
 
-        password_hash, salt = hash_password(password)
+        password_hash = hash_password(password)
         cursor.execute(
             """
             INSERT INTO usuarios (
@@ -491,7 +493,7 @@ def register_web_user(name: str, email: str, phone: str, password: str) -> WebUs
             )
             RETURNING id
             """,
-            (name.strip(), name.strip(), normalized_email, normalized_phone, normalized_phone, password_hash, password_hash, salt),
+            (name.strip(), name.strip(), normalized_email, normalized_phone, normalized_phone, password_hash, password_hash, None),
         )
         user_id = cursor.fetchone()[0]
         schema = f"user_{user_id}"
@@ -509,7 +511,12 @@ def register_web_user(name: str, email: str, phone: str, password: str) -> WebUs
             (schema, user_id),
         )
         conn.commit()
-        logger.info("Usuário registrado: %s / %s", normalized_email, normalized_phone)
+        logger.info(
+            "Usuário registrado com sucesso em usuarios: id=%s email=%s phone=%s active=true",
+            user_id,
+            normalized_email,
+            normalized_phone,
+        )
         user = fetch_user_by_id(user_id)
         if not user:
             raise RuntimeError("Não foi possível carregar o usuário criado.")
@@ -908,9 +915,17 @@ def create_session_tokens(
 
 def authenticate_web_user(identifier: str, password: str, *, remember_me: bool = False, user_agent: str | None = None, ip_address: str | None = None) -> dict[str, Any]:
     user = fetch_user_by_identifier(identifier)
+    logger.info(
+        "Login web: identifier=%s found=%s active=%s table=usuarios env=%s",
+        identifier,
+        bool(user),
+        bool(user and user.is_active and user.web_active),
+        os.getenv("APP_ENV", "development"),
+    )
     if not user:
         raise ValueError("E-mail, telefone ou senha inválidos.")
     if not user.web_active or not user.is_active:
+        logger.info("Login web bloqueado por status inativo: user_id=%s", user.id)
         raise ValueError("E-mail, telefone ou senha inválidos.")
 
     conn = None
@@ -923,9 +938,16 @@ def authenticate_web_user(identifier: str, password: str, *, remember_me: bool =
             (user.id,),
         )
         row = cursor.fetchone()
-        if not row or not row[0] or not row[1] or not bool(row[2]):
+        if not row or not row[0] or not bool(row[2]):
+            logger.info(
+                "Login web falhou na leitura do hash/sinalização: user_id=%s has_hash=%s active=%s",
+                user.id,
+                bool(row and row[0]),
+                bool(row and row[2]),
+            )
             raise ValueError("E-mail, telefone ou senha inválidos.")
-        if not verify_password(password, row[1], row[0]):
+        if not verify_password(password, row[0], row[1]):
+            logger.info("Login web falhou na verificação de senha: user_id=%s", user.id)
             raise ValueError("E-mail, telefone ou senha inválidos.")
     finally:
         if cursor is not None:
@@ -947,6 +969,68 @@ def get_user_from_access_token(token: str) -> WebUser:
     if not user.web_active or not user.is_active:
         raise ValueError("Usuário web desativado.")
     return user
+
+
+def auth_debug_summary(*, email: str | None = None, phone: str | None = None) -> dict[str, Any]:
+    if os.getenv("ENABLE_AUTH_DEBUG", "false").lower() != "true":
+        raise ValueError("Diagnóstico desativado.")
+
+    normalized_email = _normalize_email(email)
+    normalized_phone = normalize_phone_number(phone)
+    conn = None
+    cursor = None
+    try:
+        conn = conectar_bd()
+        cursor = conn.cursor()
+        summary: dict[str, Any] = {
+            "environment": os.getenv("APP_ENV", "development"),
+            "table": "usuarios",
+            "users_count": 0,
+            "email_exists": False,
+            "phone_exists": False,
+            "matches": [],
+        }
+        cursor.execute("SELECT COUNT(*) FROM usuarios")
+        summary["users_count"] = int(cursor.fetchone()[0] or 0)
+
+        def _collect(where_sql: str, param: str | None) -> None:
+            if not param:
+                return
+            cursor.execute(
+                f"""
+                SELECT id, COALESCE(name, nome), email, COALESCE(phone, telefone), COALESCE(is_active, web_active, true), COALESCE(password_hash, senha_hash) IS NOT NULL
+                FROM usuarios
+                WHERE {where_sql}
+                LIMIT 10
+                """,
+                (param,),
+            )
+            rows = cursor.fetchall() or []
+            summary["matches"].extend(
+                [
+                    {
+                        "id": int(row[0]),
+                        "name": row[1],
+                        "email": row[2],
+                        "phone": row[3],
+                        "is_active": bool(row[4]),
+                        "has_password_hash": bool(row[5]),
+                    }
+                    for row in rows
+                ]
+            )
+            return rows
+
+        email_rows = _collect("LOWER(email) = LOWER(%s)", normalized_email)
+        phone_rows = _collect("COALESCE(phone, telefone) = %s", normalized_phone)
+        summary["email_exists"] = bool(email_rows)
+        summary["phone_exists"] = bool(phone_rows)
+        return summary
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if conn is not None:
+            conn.close()
 
 
 def refresh_session(refresh_token: str) -> dict[str, Any]:

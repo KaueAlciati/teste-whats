@@ -52,6 +52,7 @@ Assistente financeiro multicanal para WhatsApp e Telegram, com backend em FastAP
   - `WEB_ADMIN_EMAIL`
   - `WEB_ADMIN_PASSWORD`
   - `WEB_ADMIN_NAME`
+  - `ENABLE_AUTH_DEBUG` (mantido `false` por padrão)
   - `WEB_ACCESS_TOKEN_MINUTES`
   - `WEB_REFRESH_TOKEN_DAYS`
 - O Telegram e o WhatsApp continuam funcionando no mesmo backend; a web é apenas mais um canal de visualização e gestão.

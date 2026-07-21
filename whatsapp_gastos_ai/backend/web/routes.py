@@ -17,6 +17,7 @@ from backend.services.web_auth_service import (
     authenticate_web_user,
     bootstrap_web_admin,
     build_avatar_label,
+    auth_debug_summary,
     fetch_user_by_id,
     get_user_from_access_token,
     get_channel_link_status,
@@ -225,6 +226,21 @@ async def register(payload: RegisterRequest):
         },
         "Conta criada com sucesso.",
     )
+
+
+@api_router.get("/auth/debug")
+async def auth_debug(request: Request, email: str | None = None, phone: str | None = None):
+    if os.getenv("ENABLE_AUTH_DEBUG", "false").lower() != "true":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
+    _current_user_from_request(request)
+    try:
+        summary = auth_debug_summary(email=email, phone=phone)
+    except ValueError as exc:
+        return _api_error(str(exc), status_code=403)
+    except Exception:
+        logger.exception("Falha ao executar debug de autenticação.")
+        return _api_error("Não foi possível executar o diagnóstico.", status_code=500)
+    return _api_success(summary, "Diagnóstico de autenticação concluído.")
 
 
 @api_router.post("/auth/refresh")
