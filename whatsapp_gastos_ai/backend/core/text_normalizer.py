@@ -66,11 +66,24 @@ def extract_period(text: str) -> str | None:
         "mes atual",
         "agora",
     }
+    current_week_tokens = {
+        "essa semana",
+        "esta semana",
+        "dessa semana",
+        "desta semana",
+        "semana atual",
+    }
     previous_month_tokens = {
         "mes passado",
         "ultimo mes",
         "mes anterior",
         "do mes passado",
+    }
+    previous_week_tokens = {
+        "semana passada",
+        "ultima semana",
+        "semana anterior",
+        "da semana passada",
     }
     current_year_tokens = {
         "esse ano",
@@ -82,6 +95,10 @@ def extract_period(text: str) -> str | None:
         return "previous_month"
     if any(token in normalized for token in current_month_tokens):
         return "current_month"
+    if any(token in normalized for token in previous_week_tokens):
+        return "previous_week"
+    if any(token in normalized for token in current_week_tokens):
+        return "current_week"
     if any(token in normalized for token in current_year_tokens):
         return "current_year"
     if any(token in normalized for token in {"hoje", "hj", "de hoje"}):

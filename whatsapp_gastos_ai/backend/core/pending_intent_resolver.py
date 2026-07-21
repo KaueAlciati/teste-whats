@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from backend.core.financial_agent import FINANCIAL_INTENTS, resolve_pending_financial_message
 from backend.core.text_normalizer import extract_period, matching_text, normalize_user_text
 
 logger = logging.getLogger(__name__)
@@ -184,6 +185,16 @@ async def resolve_pending_intent(session: Any, original_text: str, normalized_te
     if _looks_like_cancel(original_text):
         return PendingResolution(matched=True, cancel_intent=True, parameters={}, remaining_fields=[])
 
+    if pending_intent in FINANCIAL_INTENTS:
+        financial_result = resolve_pending_financial_message(session, original_text, normalized_text)
+        if financial_result is not None:
+            return PendingResolution(
+                matched=True,
+                parameters=financial_result.parameters,
+                remaining_fields=financial_result.missing_fields,
+                clarification_question=financial_result.clarification_question,
+            )
+
     collected = _merge_parameters(session)
 
     if pending_intent == "generate_financial_pdf":
@@ -210,4 +221,3 @@ async def resolve_pending_intent(session: Any, original_text: str, normalized_te
             ai_resolution.parameters = {**collected, **ai_resolution.parameters}
         return ai_resolution
     return fallback
-

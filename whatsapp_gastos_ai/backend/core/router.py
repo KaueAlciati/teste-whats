@@ -6,6 +6,8 @@ import re
 from typing import Any
 
 from backend.core.models import AgentResponse, IncomingMessage
+from backend.core.financial_agent import FINANCIAL_INTENTS, FinancialIntentResult, interpret_financial_message
+from backend.core.financial_tools import executar_intencao_financeira
 from backend.core.pending_intent_resolver import PendingResolution, resolve_pending_intent
 from backend.core.sessions import SessionData, session_store
 from backend.core.intent_classifier import IntentResult, classify_intent
@@ -554,6 +556,20 @@ async def _responder_intencao_classificada(message: IncomingMessage, session: Se
     params = dict(session.state.get("collected_parameters") or {})
     params.update(resultado.parameters or {})
 
+    if getattr(resultado, "domain", None) == "financial" or resultado.intent in FINANCIAL_INTENTS:
+        financial_result = FinancialIntentResult.model_validate(
+            {
+                "domain": getattr(resultado, "domain", "financial") or "financial",
+                "intent": resultado.intent,
+                "confidence": getattr(resultado, "confidence", 0.0),
+                "parameters": params,
+                "missing_fields": resultado.missing_fields,
+                "clarification_question": resultado.clarification_question,
+                "should_execute": resultado.should_execute,
+            }
+        )
+        return await executar_intencao_financeira(message, session, financial_result)
+
     if resultado.intent in {"greeting", "general_conversation"}:
         session_store.clear_pending_intent(message.channel, telefone)
         session.state["current_intent"] = resultado.intent
@@ -876,6 +892,19 @@ async def _processar_texto_financeiro(message: IncomingMessage, session: Session
             if moeda in CONVERSOES:
                 return AgentResponse(text=listar_conversoes_disponiveis_moeda(CONVERSOES, moeda), metadata={"intent": "get_exchange_rate"})
         return AgentResponse(text=f"⚠️ Moeda '{partes[1].upper() if len(partes) > 1 else ''}' não encontrada ou não tem conversões disponíveis.", metadata={"intent": "get_exchange_rate"})
+
+    resultado_financeiro = await interpret_financial_message(message, session)
+    logger.info(
+        "Intencao financeira=%s dominio=%s conf=%.2f pendente=%s",
+        resultado_financeiro.intent,
+        resultado_financeiro.domain,
+        resultado_financeiro.confidence,
+        session.state.get("pending_intent"),
+    )
+    if resultado_financeiro.domain == "financial":
+        session.state["current_intent"] = resultado_financeiro.intent
+        session.state["current_domain"] = resultado_financeiro.domain
+        return await _responder_intencao_classificada(message, session, resultado_financeiro)
 
     resultado_intencao = await classify_intent(message, session.state)
     session.state["current_intent"] = resultado_intencao.intent

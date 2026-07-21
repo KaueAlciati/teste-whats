@@ -63,15 +63,30 @@ class HumanizedConversationTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(resolution.remaining_fields)
 
     async def test_pending_pdf_flow_question_then_resolution(self):
-        pdf_info = {"path": "/tmp/relatorio.pdf", "name": "relatorio.pdf", "period_label": "07/2026", "total": "123.45"}
+        pdf_response = AgentResponse(
+            text="Pronto. Gerei o relatório financeiro de 07/2026.",
+            response_type="document",
+            document_path="/tmp/relatorio.pdf",
+            document_name="relatorio.pdf",
+            metadata={"intent": "generate_financial_pdf", "period": "07/2026", "total": "123.45"},
+        )
+
+        async def _fake_exec(message, session, result):
+            if result.missing_fields:
+                session.state["pending_intent"] = "generate_financial_pdf"
+                session.state["pending_parameters"] = dict(result.parameters or {})
+                session.state["pending_missing_fields"] = list(result.missing_fields or [])
+                session.state["pending_clarification_question"] = result.clarification_question
+                return AgentResponse(text=result.clarification_question or "Você quer o relatório de qual período?", metadata={"intent": "generate_financial_pdf", "pending": True})
+            return pdf_response
 
         with patch("backend.core.router.verificar_autorizacao", return_value=True), patch(
             "backend.core.router.obter_schema_por_telefone",
             return_value="schema_fin",
-        ), patch("backend.core.router.gerar_pdf_financeiro", return_value=pdf_info):
+        ), patch("backend.core.router.executar_intencao_financeira", new=AsyncMock(side_effect=_fake_exec)):
             session = session_store.get("telegram", "123")
             first = await route_incoming_message(_msg("quero um relatorio das minhas contas"), session)
-            self.assertIn("periodo", (first.text or "").lower())
+            self.assertIn("período", (first.text or "").lower())
             self.assertEqual(session.state.get("pending_intent"), "generate_financial_pdf")
 
             second = await route_incoming_message(_msg("desse mes"), session)
@@ -85,12 +100,18 @@ class HumanizedConversationTest(unittest.IsolatedAsyncioTestCase):
             text="Voce quer o relatorio deste mes ou de outro periodo?",
             metadata={"intent": "generate_financial_pdf", "pending": True},
         )
-        pdf_info = {"path": "/tmp/relatorio.pdf", "name": "relatorio.pdf", "period_label": "07/2026", "total": "123.45"}
+        pdf_response = AgentResponse(
+            text="Pronto. Gerei o relatório financeiro de 07/2026.",
+            response_type="document",
+            document_path="/tmp/relatorio.pdf",
+            document_name="relatorio.pdf",
+            metadata={"intent": "generate_financial_pdf", "period": "07/2026", "total": "123.45"},
+        )
 
         with patch("backend.core.router.verificar_autorizacao", return_value=True), patch(
             "backend.core.router.obter_schema_por_telefone",
             return_value="schema_fin",
-        ), patch("backend.core.router.gerar_pdf_financeiro", return_value=pdf_info), patch(
+        ), patch("backend.core.router.executar_intencao_financeira", new=AsyncMock(return_value=pdf_response)), patch(
             "backend.core.router.gerar_resposta_conversacional",
             new=AsyncMock(return_value=AgentResponse(text="fallback")),
         ):

@@ -43,6 +43,15 @@ def inicializar_bd(database_url: str | None = None):
         )
     """)
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS receitas (
+            id SERIAL PRIMARY KEY,
+            descricao TEXT,
+            valor REAL NOT NULL,
+            origem TEXT,
+            data TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS fatura_cartao (
             id SERIAL PRIMARY KEY,
             descricao TEXT,

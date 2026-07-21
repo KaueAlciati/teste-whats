@@ -43,8 +43,10 @@ class SessionStore:
         session = self.get(channel, user_id)
         session.state["history"] = []
         session.state["current_intent"] = None
+        session.state["current_domain"] = None
         session.state["collected_data"] = {}
         session.state["history_loaded"] = False
+        session.state["last_financial_action"] = None
         session.state.pop("last_question", None)
         session.state.pop("last_question_field", None)
         session.state.pop("last_user_answer", None)
@@ -52,6 +54,21 @@ class SessionStore:
         session.state.pop("pending_parameters", None)
         session.state.pop("pending_missing_fields", None)
         session.state.pop("pending_clarification_question", None)
+
+    def set_financial_context(
+        self,
+        channel: str,
+        user_id: str,
+        *,
+        intent: str | None = None,
+        parameters: dict[str, Any] | None = None,
+        domain: str = "financial",
+    ) -> None:
+        session = self.get(channel, user_id)
+        session.state["current_domain"] = domain
+        session.state["last_financial_action"] = intent
+        if parameters is not None:
+            session.state["last_financial_parameters"] = parameters
 
     def set_current_intent(self, channel: str, user_id: str, intent: str | None) -> None:
         session = self.get(channel, user_id)
