@@ -1,17 +1,55 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
+
 <head>
-  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Fincontrol | Entrar</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/vendor/bootstrap.min.css"><link rel="stylesheet" href="/static/css/reset.css"><link rel="stylesheet" href="/static/css/variables.css"><link rel="stylesheet" href="/static/css/themes.css"><link rel="stylesheet" href="/static/css/layout.css"><link rel="stylesheet" href="/static/css/components.css"><link rel="stylesheet" href="/static/css/forms.css"><link rel="stylesheet" href="/static/css/reference-adapter.css">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
+    <title>Login - Brand</title>
+    <link rel="stylesheet" href="assets/bootstrap/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Nunito:200,200i,300,300i,400,400i,600,600i,700,700i,800,800i,900,900i&amp;display=swap">
+    <link rel="stylesheet" href="assets/fonts/fontawesome-all.min.css">
 </head>
-<body class="page page-auth reference-auth-page">
-  <main class="container reference-auth-container"><div class="row justify-content-center"><div class="col-xl-9 col-lg-10 col-md-11"><div class="card shadow-lg reference-auth-card"><div class="row g-0">
-    <section class="col-lg-6 reference-auth-intro"><div class="reference-auth-brand"><span>FC</span><strong>Fincontrol</strong></div><p class="eyebrow">IA financeira multicanal</p><h1>Suas finanças organizadas em um só lugar.</h1><p>Acompanhe gastos, receitas, lembretes e relatórios usando os dados reais da sua conta.</p><ul><li>Dados protegidos pela sua sessão</li><li>Dashboard conectado ao PostgreSQL</li><li>Telegram e WhatsApp no mesmo núcleo</li></ul></section>
-    <section class="col-lg-6 reference-auth-form"><div class="mb-4"><p class="section-kicker">Acesso seguro</p><h2>Entrar no painel</h2><p>Use seu e-mail ou telefone cadastrado.</p></div><form id="login-form" class="form-grid"><label class="field"><span>E-mail ou telefone</span><input id="identifier" name="identifier" type="text" autocomplete="username" placeholder="seu@email.com" required></label><label class="field"><span>Senha</span><input id="password" name="password" type="password" autocomplete="current-password" placeholder="Sua senha" required></label><label class="check-row"><input id="remember_me" name="remember_me" type="checkbox"><span>Manter sessão ativa</span></label><button type="submit" class="btn btn-primary btn-block">Acessar dashboard</button><p id="login-feedback" class="feedback"></p><p class="muted-link">Não possui conta? <a href="/register">Criar conta</a></p></form></section>
-  </div></div></div></div></main>
-  <script src="/static/js/config.js"></script><script src="/static/js/utils.js"></script><script src="/static/js/api.js"></script><script src="/static/js/auth.js"></script>
+
+<body class="bg-gradient-primary">
+    <div class="container">
+        <div class="row justify-content-center">
+            <div class="col-md-9 col-lg-12 col-xl-10">
+                <div class="card shadow-lg o-hidden border-0 my-5">
+                    <div class="card-body p-0">
+                        <div class="row">
+                            <div class="col-lg-6 d-none d-lg-flex">
+                                <div class="flex-grow-1 bg-login-image" style="background-image: url(&quot;assets/img/dogs/image3.jpeg&quot;);"></div>
+                            </div>
+                            <div class="col-lg-6">
+                                <div class="p-5">
+                                    <div class="text-center">
+                                        <h4 class="text-dark mb-4">Welcome Back!</h4>
+                                    </div>
+                                    <form class="user">
+                                        <div class="mb-3"><input class="form-control form-control-user" type="email" id="exampleInputEmail" aria-describedby="emailHelp" placeholder="Enter Email Address..." name="email"></div>
+                                        <div class="mb-3"><input class="form-control form-control-user" type="password" id="exampleInputPassword" placeholder="Password" name="password"></div>
+                                        <div class="mb-3">
+                                            <div class="custom-control custom-checkbox small">
+                                                <div class="form-check"><input class="form-check-input custom-control-input" type="checkbox" id="formCheck-1"><label class="form-check-label custom-control-label" for="formCheck-1">Remember Me</label></div>
+                                            </div>
+                                        </div><button class="btn btn-primary d-block btn-user w-100" type="submit">Login</button>
+                                        <hr><a class="btn btn-primary d-block btn-google btn-user w-100 mb-2" role="button"><i class="fab fa-google"></i>&nbsp; Login with Google</a><a class="btn btn-primary d-block btn-facebook btn-user w-100" role="button"><i class="fab fa-facebook-f"></i>&nbsp; Login with Facebook</a>
+                                        <hr>
+                                    </form>
+                                    <div class="text-center"><a class="small" href="forgot-password.html">Forgot Password?</a></div>
+                                    <div class="text-center"><a class="small" href="register.html">Create an Account!</a></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="assets/bootstrap/js/bootstrap.min.js"></script>
+    <script src="assets/js/bs-init.js"></script>
+    <script src="assets/js/theme.js"></script>
 </body>
+<script src="/static/assets/js/fincontrol_reference.js"></script>
+
 </html>
