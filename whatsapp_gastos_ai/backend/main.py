@@ -69,6 +69,8 @@ app.include_router(page_router)
 
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+    # The reference frontend uses relative assets (assets/...) from page routes.
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIR / "assets")), name="assets")
 
 
 @app.get("/ping")

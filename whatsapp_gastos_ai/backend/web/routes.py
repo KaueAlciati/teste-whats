@@ -135,7 +135,7 @@ async def dashboard_page(request: Request):
         return RedirectResponse(url="/login", status_code=302)
     try:
         get_user_from_access_token(access_token)
-        return _frontend_file("dashboard.html")
+        return _frontend_file("index.html")
     except Exception:
         return RedirectResponse(url="/login", status_code=302)
 
@@ -147,7 +147,7 @@ async def configuracoes_page(request: Request):
         return RedirectResponse(url="/login", status_code=302)
     try:
         get_user_from_access_token(access_token)
-        return _frontend_file("configuracoes.html")
+        return _frontend_file("profile.html")
     except Exception:
         return RedirectResponse(url="/login", status_code=302)
 
@@ -155,6 +155,16 @@ async def configuracoes_page(request: Request):
 @page_router.get("/index.html")
 async def index_page(request: Request):
     return await root(request)
+
+
+@page_router.get("/profile.html")
+async def profile_page(request: Request):
+    return await configuracoes_page(request)
+
+
+@page_router.get("/table.html")
+async def table_page(request: Request):
+    return _frontend_file("table.html")
 
 
 @api_router.on_event("startup")
