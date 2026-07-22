@@ -43,6 +43,7 @@ window.FincontrolLayout = (() => {
       <div class="topbar-inner">
         <button id="sidebar-toggle" class="mobile-menu-button" type="button" aria-label="Abrir menu" aria-expanded="false">${icon("menu")}</button>
         <div class="topbar-context"><span class="topbar-label">Fincontrol</span><strong>Visão geral das suas finanças</strong></div>
+        <label class="topbar-search" aria-label="Buscar no painel"><i data-lucide="search" aria-hidden="true"></i><input type="search" placeholder="Buscar no painel" autocomplete="off"></label>
         <div class="topbar-actions">
           <label class="period-select"><span class="topbar-period-label">Período</span><select id="period-select" aria-label="Selecionar período">
             <option value="current_month" ${period === "current_month" ? "selected" : ""}>Este mês</option>
@@ -53,6 +54,7 @@ window.FincontrolLayout = (() => {
             <option value="today" ${period === "today" ? "selected" : ""}>Hoje</option>
           </select></label>
           <button id="refresh-dashboard" class="icon-button" type="button" aria-label="Atualizar dados">${icon("refresh-cw")}</button>
+          <button class="icon-button notification-button" type="button" aria-label="Notificações">${icon("bell")}</button>
           <span class="topbar-avatar avatar" aria-label="Usuário">${initials(user)}</span>
         </div>
       </div>
