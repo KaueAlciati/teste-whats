@@ -19,10 +19,10 @@
 .field select,
 .field textarea {
   width: 100%;
-  min-height: 50px;
-  border-radius: 14px;
+  min-height: 44px;
+  border-radius: 7px;
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--surface);
   color: var(--text);
   padding: 0 14px;
   outline: none;
@@ -39,7 +39,7 @@
 .field select:focus,
 .field textarea:focus {
   border-color: rgba(27, 122, 67, 0.42);
-  box-shadow: 0 0 0 4px rgba(27, 122, 67, 0.08);
+  box-shadow: 0 0 0 3px var(--primary-light);
 }
 
 .check-row {

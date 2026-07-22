@@ -139,6 +139,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       await window.FincontrolLayout.renderShell(user, "current_month", null, handleLogout);
       await loadTelegramSection();
+      window.lucide?.createIcons?.();
     } catch (error) {
       window.location.href = "/login";
     }

@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Fincontrol | Configurações</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/reset.css">
   <link rel="stylesheet" href="/static/css/variables.css">
   <link rel="stylesheet" href="/static/css/themes.css">
@@ -12,50 +14,32 @@
   <link rel="stylesheet" href="/static/css/forms.css">
   <link rel="stylesheet" href="/static/css/dashboard.css">
   <link rel="stylesheet" href="/static/css/responsive.css">
+  <script src="https://unpkg.com/lucide@latest"></script>
 </head>
 <body class="page page-dashboard">
   <div class="dashboard-shell">
-    <aside id="sidebar" class="sidebar"></aside>
+    <div id="sidebar-backdrop" class="sidebar-backdrop" hidden></div>
+    <aside id="sidebar" class="sidebar" aria-label="Navegação principal"></aside>
     <div class="dashboard-content">
       <header id="topbar" class="topbar"></header>
       <main class="dashboard-main">
-        <section class="hero-panel card">
-          <div>
-            <p class="eyebrow">Configurações</p>
-            <h1>Conta e integrações.</h1>
-            <p id="config-summary" class="hero-copy">Carregando dados da conta...</p>
-          </div>
-          <div class="hero-meta">
-            <strong id="config-status-badge">-</strong>
-            <span id="config-status-text">-</span>
-          </div>
+        <section class="page-heading">
+          <div><p class="eyebrow">Preferências</p><h1>Configurações</h1><p id="config-summary" class="page-subtitle">Gerencie sua conta e os canais conectados.</p></div>
+          <div class="period-badge"><span class="status-dot"></span><strong id="config-status-badge">Conta ativa</strong><small id="config-status-text">-</small></div>
         </section>
-
-        <section class="dashboard-grid">
+        <section class="dashboard-grid settings-grid">
           <article class="card">
-            <div class="card-header">
-              <div>
-                <h2>Conta</h2>
-                <p>Dados principais do usuário autenticado.</p>
-              </div>
-            </div>
+            <div class="card-header"><div><p class="section-kicker">Perfil</p><h2>Dados da conta</h2><p>Informações do usuário autenticado.</p></div><span class="icon-box icon-box-muted"><i data-lucide="user-round"></i></span></div>
             <div id="account-card" class="stack-list"></div>
           </article>
-
           <article class="card">
-            <div class="card-header">
-              <div>
-                <h2>Integrações</h2>
-                <p>Vínculo seguro com o Telegram.</p>
-              </div>
-            </div>
+            <div class="card-header"><div><p class="section-kicker">Integrações</p><h2>Telegram</h2><p>Use o mesmo agente pelo seu canal conectado.</p></div><span class="icon-box icon-box-green"><i data-lucide="send"></i></span></div>
             <div id="telegram-card" class="stack-list"></div>
           </article>
         </section>
       </main>
     </div>
   </div>
-
   <script src="/static/js/config.js"></script>
   <script src="/static/js/utils.js"></script>
   <script src="/static/js/api.js"></script>
