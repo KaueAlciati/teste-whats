@@ -16,7 +16,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const delta = Number(comparison || 0);
     const deltaClass = tone === "negative" ? "summary-negative" : delta >= 0 ? "summary-positive" : "summary-negative";
     const deltaLabel = previous !== undefined && previous !== null ? `<small class="${deltaClass}">${delta >= 0 ? "+" : ""}${delta.toFixed(1)}% vs período anterior</small>` : `<small>Período selecionado</small>`;
-    return `<article class="card summary-card"><div class="metric"><div class="metric-top"><span class="metric-label">${window.FincontrolUtils.escapeHtml(label)}</span><span class="metric-icon ${tone === "negative" ? "metric-icon-danger" : ""}"><i data-lucide="${lucide}" aria-hidden="true"></i></span></div><strong class="metric-value ${tone === "positive" ? "summary-positive" : tone === "negative" ? "summary-negative" : ""}">${window.FincontrolUtils.formatCurrency(value)}</strong>${deltaLabel}</div></article>`;
+    return `<div class="col-md-6 col-xl-3 mb-4"><article class="card shadow h-100 summary-card"><div class="card-body"><div class="d-flex align-items-center justify-content-between"><span class="metric-label">${window.FincontrolUtils.escapeHtml(label)}</span><span class="metric-icon ${tone === "negative" ? "metric-icon-danger" : ""}"><i data-lucide="${lucide}" aria-hidden="true"></i></span></div><strong class="metric-value d-block mt-2 ${tone === "positive" ? "summary-positive" : tone === "negative" ? "summary-negative" : ""}">${window.FincontrolUtils.formatCurrency(value)}</strong>${deltaLabel}</div></article></div>`;
   }
 
   function renderSummary(summary) {
