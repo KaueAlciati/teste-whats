@@ -1,66 +1,17 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Fincontrol | Acesso</title>
-  <link rel="stylesheet" href="/static/css/reset.css">
-  <link rel="stylesheet" href="/static/css/variables.css">
-  <link rel="stylesheet" href="/static/css/themes.css">
-  <link rel="stylesheet" href="/static/css/layout.css">
-  <link rel="stylesheet" href="/static/css/components.css">
-  <link rel="stylesheet" href="/static/css/forms.css">
-  <link rel="stylesheet" href="/static/css/responsive.css">
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fincontrol | Entrar</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/vendor/bootstrap.min.css"><link rel="stylesheet" href="/static/css/reset.css"><link rel="stylesheet" href="/static/css/variables.css"><link rel="stylesheet" href="/static/css/themes.css"><link rel="stylesheet" href="/static/css/layout.css"><link rel="stylesheet" href="/static/css/components.css"><link rel="stylesheet" href="/static/css/forms.css"><link rel="stylesheet" href="/static/css/reference-adapter.css">
 </head>
-<body class="page page-auth">
-  <main class="auth-shell">
-    <section class="auth-hero">
-      <div class="brand-mark">FC</div>
-      <p class="eyebrow">TCC • Finanças • Multicanal</p>
-      <h1>Controle financeiro com leitura real dos dados.</h1>
-      <p class="hero-copy">
-        Acompanhe gastos, receitas, lembretes e relatórios em uma interface web limpa,
-        integrada ao mesmo backend do Telegram e do WhatsApp.
-      </p>
-      <ul class="hero-points">
-        <li>Login seguro por cookie HttpOnly</li>
-        <li>Dados do PostgreSQL em tempo real</li>
-        <li>Visualização responsiva para desktop e mobile</li>
-      </ul>
-    </section>
-
-    <section class="auth-card card">
-      <div class="card-header">
-        <h2>Entrar no painel</h2>
-        <p>Use o usuário web provisionado pelo backend.</p>
-      </div>
-
-      <form id="login-form" class="form-grid">
-        <label class="field">
-          <span>E-mail ou telefone</span>
-          <input id="identifier" name="identifier" type="text" autocomplete="username" placeholder="ex.: admin@fincontrol.com" required>
-        </label>
-
-        <label class="field">
-          <span>Senha</span>
-          <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Sua senha" required>
-        </label>
-
-        <label class="check-row">
-          <input id="remember_me" name="remember_me" type="checkbox">
-          <span>Manter sessão ativa</span>
-        </label>
-
-        <button type="submit" class="btn btn-primary btn-block">Acessar dashboard</button>
-        <p id="login-feedback" class="feedback"></p>
-        <p class="muted-link">Não possui conta? <a href="/register">Criar conta</a></p>
-      </form>
-    </section>
-  </main>
-
-  <script src="/static/js/config.js"></script>
-  <script src="/static/js/utils.js"></script>
-  <script src="/static/js/api.js"></script>
-  <script src="/static/js/auth.js"></script>
+<body class="page page-auth reference-auth-page">
+  <main class="container reference-auth-container"><div class="row justify-content-center"><div class="col-xl-9 col-lg-10 col-md-11"><div class="card shadow-lg reference-auth-card"><div class="row g-0">
+    <section class="col-lg-6 reference-auth-intro"><div class="reference-auth-brand"><span>FC</span><strong>Fincontrol</strong></div><p class="eyebrow">IA financeira multicanal</p><h1>Suas finanças organizadas em um só lugar.</h1><p>Acompanhe gastos, receitas, lembretes e relatórios usando os dados reais da sua conta.</p><ul><li>Dados protegidos pela sua sessão</li><li>Dashboard conectado ao PostgreSQL</li><li>Telegram e WhatsApp no mesmo núcleo</li></ul></section>
+    <section class="col-lg-6 reference-auth-form"><div class="mb-4"><p class="section-kicker">Acesso seguro</p><h2>Entrar no painel</h2><p>Use seu e-mail ou telefone cadastrado.</p></div><form id="login-form" class="form-grid"><label class="field"><span>E-mail ou telefone</span><input id="identifier" name="identifier" type="text" autocomplete="username" placeholder="seu@email.com" required></label><label class="field"><span>Senha</span><input id="password" name="password" type="password" autocomplete="current-password" placeholder="Sua senha" required></label><label class="check-row"><input id="remember_me" name="remember_me" type="checkbox"><span>Manter sessão ativa</span></label><button type="submit" class="btn btn-primary btn-block">Acessar dashboard</button><p id="login-feedback" class="feedback"></p><p class="muted-link">Não possui conta? <a href="/register">Criar conta</a></p></form></section>
+  </div></div></div></div></main>
+  <script src="/static/js/config.js"></script><script src="/static/js/utils.js"></script><script src="/static/js/api.js"></script><script src="/static/js/auth.js"></script>
 </body>
 </html>
