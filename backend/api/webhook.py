@@ -1,3 +1,4 @@
+import logging
 import os
 
 from fastapi import APIRouter, BackgroundTasks, Request, Response
@@ -8,6 +9,7 @@ from backend.services.whatsapp_service import send_text_message
 load_dotenv()
 
 router = APIRouter()
+logger = logging.getLogger("uvicorn.error")
 
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 
@@ -29,6 +31,7 @@ async def receber_mensagem(request: Request, background_tasks: BackgroundTasks):
     dados = await request.json()
 
     for destino, texto in extrair_mensagens_de_texto(dados):
+        logger.info("Mensagem de texto recebida de: %s", destino)
         background_tasks.add_task(
             send_text_message,
             destino,
