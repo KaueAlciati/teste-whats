@@ -1,7 +1,9 @@
 import os
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Request, Response
 from dotenv import load_dotenv
+
+from backend.services.whatsapp_service import send_text_message
 
 load_dotenv()
 
@@ -23,11 +25,79 @@ async def verificar_webhook(request: Request):
 
 
 @router.post("/webhook")
-async def receber_mensagem(request: Request):
+async def receber_mensagem(request: Request, background_tasks: BackgroundTasks):
     dados = await request.json()
 
-    print("\n===== MENSAGEM RECEBIDA DO WHATSAPP =====")
-    print(dados)
-    print("=========================================\n")
+    for destino, texto in extrair_mensagens_de_texto(dados):
+        background_tasks.add_task(
+            send_text_message,
+            destino,
+            "Olá! Seu assistente financeiro está conectado ao WhatsApp ✅",
+        )
 
     return {"status": "ok"}
+
+
+def extrair_mensagens_de_texto(dados: object) -> list[tuple[str, str]]:
+    mensagens_extraidas: list[tuple[str, str]] = []
+
+    if not isinstance(dados, dict):
+        return mensagens_extraidas
+
+    entries = dados.get("entry")
+    if not isinstance(entries, list):
+        return mensagens_extraidas
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+
+        changes = entry.get("changes")
+        if not isinstance(changes, list):
+            continue
+
+        for change in changes:
+            if not isinstance(change, dict):
+                continue
+
+            value = change.get("value")
+            if not isinstance(value, dict):
+                continue
+
+            metadata = value.get("metadata")
+            numero_proprio = ""
+            if isinstance(metadata, dict):
+                numero_proprio = _somente_digitos(
+                    metadata.get("display_phone_number")
+                )
+
+            messages = value.get("messages")
+            if not isinstance(messages, list):
+                continue
+
+            for message in messages:
+                if not isinstance(message, dict):
+                    continue
+                if message.get("type") != "text" or message.get("is_echo") is True:
+                    continue
+
+                destino = message.get("from")
+                text = message.get("text")
+                texto = text.get("body") if isinstance(text, dict) else None
+
+                if not isinstance(destino, str) or not isinstance(texto, str):
+                    continue
+                if not destino or not texto:
+                    continue
+                if numero_proprio and _somente_digitos(destino) == numero_proprio:
+                    continue
+
+                mensagens_extraidas.append((destino, texto))
+
+    return mensagens_extraidas
+
+
+def _somente_digitos(valor: object) -> str:
+    if not isinstance(valor, str):
+        return ""
+    return "".join(caractere for caractere in valor if caractere.isdigit())
