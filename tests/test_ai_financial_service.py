@@ -179,6 +179,7 @@ class AIFinancialServiceTestCase(unittest.TestCase):
             "category",
             "transaction_date",
             "payment_method",
+            "type",
             "period",
             "clarification_question",
         )
@@ -189,6 +190,47 @@ class AIFinancialServiceTestCase(unittest.TestCase):
                     for option in schema["properties"][field_name]["anyOf"]
                 }
                 self.assertIn("null", field_types)
+
+    def test_includes_recent_transaction_context_for_corrections(self) -> None:
+        intent = FinancialIntent(
+            action="correct_last_transaction",
+            amount=50,
+            description=None,
+            category=None,
+            transaction_date=None,
+            payment_method=None,
+            type=None,
+            period=None,
+            needs_clarification=False,
+            clarification_question=None,
+            confidence=0.98,
+        )
+        client = Mock()
+        client.responses.parse.return_value = SimpleNamespace(output_parsed=intent)
+        context = (
+            "tipo=despesa; valor=30.00; descrição=gasolina; "
+            "categoria=Transporte; data=hoje."
+        )
+
+        with patch.dict(
+            os.environ,
+            {"GROQ_API_KEY": "test-key", "AI_PROVIDER": "groq"},
+            clear=True,
+        ):
+            with patch(
+                "backend.services.ai_financial_service.OpenAI",
+                return_value=client,
+            ):
+                result = interpret_financial_message(
+                    "não, era 50 reais",
+                    date(2026, 9, 18),
+                    last_transaction_context=context,
+                )
+
+        self.assertEqual(result.action, "correct_last_transaction")
+        instructions = client.responses.parse.call_args.kwargs["instructions"]
+        self.assertIn(context, instructions)
+        self.assertIn("nova frase completa", instructions)
 
     def test_logs_safe_groq_configuration(self) -> None:
         intent = FinancialIntent(

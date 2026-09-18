@@ -297,6 +297,80 @@ def audio_error_response() -> str:
     return "Não consegui processar esse áudio agora. Tenta novamente em alguns instantes."
 
 
+def format_audio_understanding(
+    transcription: str,
+    response: str,
+    *,
+    variant: int = 0,
+) -> str:
+    correction_prompts = (
+        "Se eu tiver entendido algo errado, é só me corrigir.",
+        "Se alguma coisa ficou diferente do que você falou, pode me avisar.",
+        "Se eu peguei algum detalhe errado, pode corrigir aqui mesmo.",
+    )
+    understood = _display_transcription(transcription)
+    return (
+        f'🎧 Entendi: "{understood}"\n\n'
+        f"{response}\n\n"
+        f"{correction_prompts[variant % len(correction_prompts)]}"
+    )
+
+
+def format_audio_confirmation(transcription: str) -> str:
+    understood = _display_transcription(transcription)
+    return f'Eu entendi: "{understood}". Foi isso mesmo?'
+
+
+def format_transaction_correction(
+    *,
+    transaction_type: TransactionType,
+    amount: Decimal,
+    description: str,
+    category: str,
+    transaction_date: date,
+    current_date: date,
+    user_name: str | None = None,
+    variant: int = 0,
+) -> str:
+    name = _first_name(user_name)
+    introductions = (
+        "Boa, corrigi aqui 👌",
+        "Certo, ajustei pra você.",
+        f"Pronto, {name}. Já deixei certo." if name else "Pronto, já deixei certo.",
+    )
+    emoji = _transaction_emoji(category, description)
+    return (
+        f"{introductions[variant % len(introductions)]}\n\n"
+        f"{emoji} {_display_text(description)} — {format_brl(amount)}\n"
+        f"📂 {category}\n"
+        f"📅 {format_natural_date(transaction_date, current_date)}"
+    )
+
+
+def format_correction_not_found() -> str:
+    return (
+        "Não achei um lançamento recente para corrigir. "
+        "Me fala qual movimentação você quer alterar."
+    )
+
+
+def format_correction_clarification(detail: str | None = None) -> str:
+    if detail:
+        return detail
+    return "O que você quer corrigir no último lançamento?"
+
+
+def format_cancel_confirmation(
+    *,
+    description: str,
+    amount: Decimal,
+) -> str:
+    return (
+        "Quer que eu apague o último lançamento de "
+        f"{_display_text(description)} — {format_brl(amount)}?"
+    )
+
+
 def _transaction_emoji(category: str, description: str) -> str:
     normalized_description = _normalize_text(description)
     if any(
@@ -305,6 +379,11 @@ def _transaction_emoji(category: str, description: str) -> str:
     ):
         return "⛽"
     return _CATEGORY_EMOJIS.get(_normalize_text(category), "💰")
+
+
+def _display_transcription(transcription: str) -> str:
+    normalized = " ".join(transcription.split()).replace('"', "'")
+    return normalized[:500]
 
 
 def _first_name(user_name: str | None) -> str | None:

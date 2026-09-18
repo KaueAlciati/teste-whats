@@ -77,6 +77,7 @@ class AudioProcessingTestCase(unittest.TestCase):
             "wamid.audio",
             "gastei 80 reais de diesel hoje",
             source="whatsapp_audio",
+            audio_transcription="gastei 80 reais de diesel hoje",
         )
         send_mock.assert_awaited_once_with(
             "5515999999999",

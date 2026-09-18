@@ -43,6 +43,7 @@ class FinancialAIServiceError(RuntimeError):
 def interpret_financial_message(
     text: str,
     current_date: date,
+    last_transaction_context: str | None = None,
 ) -> FinancialIntent:
     api_key = os.getenv("GROQ_API_KEY")
     provider = os.getenv("AI_PROVIDER", "groq")
@@ -55,6 +56,7 @@ def interpret_financial_message(
     if not api_key:
         raise FinancialAIServiceError("Serviço de IA indisponível")
 
+    recent_context = last_transaction_context or "Nenhum lançamento recente."
     instructions = f"""
 Você interpreta mensagens financeiras pessoais escritas em português do Brasil.
 Sua única tarefa é classificar e extrair dados para o schema fornecido.
@@ -80,13 +82,30 @@ Interprete valores por extenso e expressões monetárias informais do pt-BR.
 Exemplos: "oitenta conto" significa 80 reais e "dois mil e quinhentos"
 significa 2500 reais.
 
+Contexto seguro do último lançamento recente:
+{recent_context}
+
+Use esse contexto somente para interpretar correções explícitas ou pedidos de
+cancelamento. Uma nova frase completa de gasto ou receita deve continuar sendo
+uma nova movimentação, mesmo que exista um lançamento recente.
+
 Ações permitidas:
 - create_expense para gastos e pagamentos;
 - create_income para dinheiro recebido;
 - query_balance para saldo atual;
 - query_expenses para total de gastos;
 - query_income para total de receitas;
+- correct_last_transaction quando o usuário corrige explicitamente o último
+  lançamento, como "não, era 50", "era diesel" ou "foi ontem";
+- cancel_last_transaction para pedidos explícitos como "apaga isso" ou
+  "cancela o último";
 - unknown para mensagens não financeiras.
+
+Em correções, preencha somente os campos que o usuário pediu para alterar e
+deixe os demais como null. O campo type aceita expense ou income. Só altere
+type quando a mensagem for explícita e a confiança for alta. A descrição da
+correção também deve ser curta e limpa, sem repetir a frase completa. Por
+exemplo, para "era diesel, não gasolina", use apenas "Diesel".
 
 Períodos permitidos: today, yesterday, current_week, current_month,
 previous_month e all. Para consultas sem período explícito, use all.

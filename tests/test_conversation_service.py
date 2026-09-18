@@ -6,7 +6,11 @@ from backend.services.conversation_service import (
     balance_response,
     clarification_response,
     format_brl,
+    format_audio_understanding,
+    format_correction_clarification,
+    format_correction_not_found,
     format_natural_date,
+    format_transaction_correction,
     non_financial_response,
     response_variant,
     total_response,
@@ -162,6 +166,40 @@ class ConversationServiceTestCase(unittest.TestCase):
         self.assertEqual(
             response_variant("wamid.same-message"),
             response_variant("wamid.same-message"),
+        )
+
+    def test_audio_understanding_includes_transcription_and_correction_hint(self) -> None:
+        response = format_audio_understanding(
+            "gastei 30 reais de gasolina hoje",
+            "Pronto, deixei esse gasto salvo.",
+            variant=1,
+        )
+
+        self.assertIn(
+            '🎧 Entendi: "gastei 30 reais de gasolina hoje"',
+            response,
+        )
+        self.assertIn("pode me avisar", response)
+
+    def test_transaction_correction_is_human_and_exact(self) -> None:
+        response = format_transaction_correction(
+            transaction_type="expense",
+            amount=Decimal("50.00"),
+            description="diesel",
+            category="Transporte",
+            transaction_date=self.current_date,
+            current_date=self.current_date,
+            variant=0,
+        )
+
+        self.assertIn("Boa, corrigi aqui", response)
+        self.assertIn("Diesel — R$ 50,00", response)
+
+    def test_correction_messages_are_natural(self) -> None:
+        self.assertIn("lançamento recente", format_correction_not_found())
+        self.assertEqual(
+            format_correction_clarification(),
+            "O que você quer corrigir no último lançamento?",
         )
 
 

@@ -1,10 +1,11 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import case, func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from backend.models.category import Category
 from backend.models.financial_transaction import FinancialTransaction
 
 
@@ -113,6 +114,98 @@ def get_transaction_by_whatsapp_message_id(
             FinancialTransaction.whatsapp_message_id == whatsapp_message_id
         )
     )
+
+
+def get_latest_transaction_for_user(
+    db: Session,
+    *,
+    user_id: int,
+    created_after: datetime | None = None,
+) -> FinancialTransaction | None:
+    statement = (
+        select(FinancialTransaction)
+        .where(FinancialTransaction.user_id == user_id)
+        .order_by(
+            FinancialTransaction.created_at.desc(),
+            FinancialTransaction.id.desc(),
+        )
+        .limit(1)
+    )
+    if created_after is not None:
+        statement = statement.where(
+            FinancialTransaction.created_at >= created_after
+        )
+    return db.scalar(statement)
+
+
+def update_transaction(
+    db: Session,
+    *,
+    transaction: FinancialTransaction,
+    user_id: int,
+    amount: Decimal | str | int | None = None,
+    description: str | None = None,
+    category: Category | None = None,
+    transaction_date: date | None = None,
+    payment_method: str | None = None,
+    type: str | None = None,
+) -> FinancialTransaction:
+    if transaction.user_id != user_id:
+        raise PermissionError("Movimentação pertence a outro usuário")
+
+    final_type = type or transaction.type
+    if final_type not in TRANSACTION_TYPES:
+        raise ValueError("Tipo de movimentação inválido")
+
+    if category is not None:
+        if category.type != final_type:
+            raise ValueError("Categoria incompatível com a movimentação")
+        if category.user_id not in (None, user_id):
+            raise PermissionError("Categoria pertence a outro usuário")
+    elif type is not None and transaction.category is not None:
+        if transaction.category.type != final_type:
+            raise ValueError("Categoria incompatível com o novo tipo")
+
+    normalized_amount = _normalize_amount(amount) if amount is not None else None
+    normalized_description = None
+    if description is not None:
+        normalized_description = description.strip()
+        if not normalized_description or len(normalized_description) > 255:
+            raise ValueError("Descrição inválida")
+
+    normalized_payment_method = None
+    if payment_method is not None:
+        normalized_payment_method = payment_method.strip()
+        if not normalized_payment_method or len(normalized_payment_method) > 50:
+            raise ValueError("Forma de pagamento inválida")
+
+    if transaction_date is not None and (
+        not isinstance(transaction_date, date)
+        or isinstance(transaction_date, datetime)
+    ):
+        raise ValueError("Data da movimentação inválida")
+
+    try:
+        if normalized_amount is not None:
+            transaction.amount = normalized_amount
+        if normalized_description is not None:
+            transaction.description = normalized_description
+        if transaction_date is not None:
+            transaction.transaction_date = transaction_date
+        if normalized_payment_method is not None:
+            transaction.payment_method = normalized_payment_method
+        if type is not None:
+            transaction.type = final_type
+        if category is not None:
+            transaction.category_id = category.id
+            transaction.category = category
+
+        db.commit()
+        db.refresh(transaction)
+        return transaction
+    except SQLAlchemyError:
+        db.rollback()
+        raise
 
 
 def list_transactions(

@@ -9,8 +9,12 @@ FinancialAction = Literal[
     "query_balance",
     "query_expenses",
     "query_income",
+    "correct_last_transaction",
+    "cancel_last_transaction",
     "unknown",
 ]
+
+FinancialTransactionType = Literal["expense", "income"]
 
 FinancialPeriod = Literal[
     "today",
@@ -31,6 +35,7 @@ class FinancialIntent(BaseModel):
     category: str | None = None
     transaction_date: str | None = None
     payment_method: str | None = None
+    type: FinancialTransactionType | None = None
     period: FinancialPeriod | None = None
     needs_clarification: bool
     clarification_question: str | None = None
