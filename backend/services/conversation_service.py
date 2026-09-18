@@ -276,6 +276,27 @@ def operation_error_response() -> str:
     return "Não consegui concluir isso agora. Tenta novamente em alguns instantes."
 
 
+def audio_processing_response(variant: int = 0) -> str:
+    responses = (
+        "Beleza, vou ouvir isso pra você 🎧",
+        "Um instante, vou analisar esse áudio.",
+        "Certo, já vou ouvir seu áudio 🎧",
+    )
+    return responses[variant % len(responses)]
+
+
+def audio_empty_response() -> str:
+    return "Não consegui entender bem esse áudio. Pode mandar de novo?"
+
+
+def audio_too_large_response() -> str:
+    return "Esse áudio ficou grande demais. Pode enviar uma versão menor?"
+
+
+def audio_error_response() -> str:
+    return "Não consegui processar esse áudio agora. Tenta novamente em alguns instantes."
+
+
 def _transaction_emoji(category: str, description: str) -> str:
     normalized_description = _normalize_text(description)
     if any(

@@ -76,6 +76,10 @@ Exemplos:
 - "recebi 1500 do trabalho" vira "trabalho".
 Se não houver informação suficiente para uma descrição, não invente.
 
+Interprete valores por extenso e expressões monetárias informais do pt-BR.
+Exemplos: "oitenta conto" significa 80 reais e "dois mil e quinhentos"
+significa 2500 reais.
+
 Ações permitidas:
 - create_expense para gastos e pagamentos;
 - create_income para dinheiro recebido;

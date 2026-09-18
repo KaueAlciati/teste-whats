@@ -118,6 +118,10 @@ class AIFinancialServiceTestCase(unittest.TestCase):
                         "objeto ou motivo curto",
                         call_arguments["instructions"],
                     )
+                    self.assertIn(
+                        "oitenta conto",
+                        call_arguments["instructions"],
+                    )
 
     def test_uses_configured_model(self) -> None:
         intent = FinancialIntent(

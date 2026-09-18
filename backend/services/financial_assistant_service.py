@@ -14,9 +14,17 @@ from backend.services.ai_financial_service import (
     FinancialAIServiceError,
     interpret_financial_message,
 )
+from backend.services.audio_transcription_service import (
+    AudioTranscriptionError,
+    transcribe_audio,
+)
 from backend.services.category_service import find_category_or_default
 from backend.services.conversation_service import (
     ai_error_response,
+    audio_empty_response,
+    audio_error_response,
+    audio_processing_response,
+    audio_too_large_response,
     balance_response,
     clarification_response,
     no_transactions_response,
@@ -35,6 +43,11 @@ from backend.services.financial_service import (
     has_transactions,
 )
 from backend.services.user_service import get_or_create_whatsapp_user
+from backend.services.whatsapp_media_service import (
+    WhatsAppMediaError,
+    WhatsAppMediaTooLargeError,
+    download_whatsapp_media,
+)
 from backend.services.whatsapp_service import send_text_message
 
 
@@ -45,10 +58,77 @@ DATABASE_ERROR_MESSAGE = operation_error_response()
 UNKNOWN_MESSAGE = non_financial_response("")
 
 
+async def process_financial_audio_message(
+    whatsapp_phone: str,
+    whatsapp_message_id: str,
+    media_id: str,
+    mime_type: str | None,
+) -> None:
+    try:
+        already_processed = await asyncio.to_thread(
+            _message_already_processed,
+            whatsapp_message_id,
+        )
+    except Exception as exc:
+        logger.error(
+            "Falha ao verificar duplicidade do áudio: tipo=%s",
+            type(exc).__name__,
+        )
+        already_processed = False
+
+    if already_processed:
+        return
+
+    variant = response_variant(whatsapp_message_id)
+    await send_text_message(
+        whatsapp_phone,
+        audio_processing_response(variant),
+    )
+
+    try:
+        media = await download_whatsapp_media(
+            media_id,
+            fallback_mime_type=mime_type,
+        )
+        transcription = await transcribe_audio(
+            media.content,
+            filename=media.filename,
+            mime_type=media.mime_type,
+        )
+    except WhatsAppMediaTooLargeError:
+        logger.error("Áudio do WhatsApp excedeu o tamanho máximo")
+        await send_text_message(whatsapp_phone, audio_too_large_response())
+        return
+    except (WhatsAppMediaError, AudioTranscriptionError) as exc:
+        logger.error("Falha ao processar áudio: tipo=%s", type(exc).__name__)
+        await send_text_message(whatsapp_phone, audio_error_response())
+        return
+    except Exception as exc:
+        logger.error(
+            "Falha inesperada ao processar áudio: tipo=%s",
+            type(exc).__name__,
+        )
+        await send_text_message(whatsapp_phone, audio_error_response())
+        return
+
+    if not transcription.strip():
+        await send_text_message(whatsapp_phone, audio_empty_response())
+        return
+
+    await process_financial_message(
+        whatsapp_phone,
+        whatsapp_message_id,
+        transcription,
+        source="whatsapp_audio",
+    )
+
+
 async def process_financial_message(
     whatsapp_phone: str,
     whatsapp_message_id: str,
     text: str,
+    *,
+    source: str = "whatsapp_text",
 ) -> None:
     try:
         response_text = await asyncio.to_thread(
@@ -56,6 +136,7 @@ async def process_financial_message(
             whatsapp_phone,
             whatsapp_message_id,
             text,
+            source,
         )
     except FinancialAIServiceError:
         logger.error("Falha ao interpretar mensagem financeira")
@@ -75,6 +156,7 @@ def _process_financial_message(
     whatsapp_phone: str,
     whatsapp_message_id: str,
     text: str,
+    source: str = "whatsapp_text",
 ) -> str | None:
     if engine is None:
         raise RuntimeError("Banco de dados indisponível")
@@ -88,6 +170,7 @@ def _process_financial_message(
             text=text,
             whatsapp_message_id=whatsapp_message_id,
             current_date=current_date,
+            source=source,
         )
 
 
@@ -98,6 +181,7 @@ def handle_financial_message(
     text: str,
     whatsapp_message_id: str,
     current_date: date,
+    source: str = "whatsapp_text",
 ) -> str | None:
     if get_transaction_by_whatsapp_message_id(db, whatsapp_message_id) is not None:
         return None
@@ -122,6 +206,7 @@ def handle_financial_message(
             whatsapp_message_id=whatsapp_message_id,
             current_date=current_date,
             variant=variant,
+            source=source,
         )
 
     if intent.action == "create_income":
@@ -133,6 +218,7 @@ def handle_financial_message(
             whatsapp_message_id=whatsapp_message_id,
             current_date=current_date,
             variant=variant,
+            source=source,
         )
 
     if intent.action == "query_balance":
@@ -184,6 +270,7 @@ def _create_transaction_response(
     whatsapp_message_id: str,
     current_date: date,
     variant: int,
+    source: str,
 ) -> str | None:
     if intent.amount is None:
         return "Qual foi o valor da movimentação?"
@@ -229,7 +316,7 @@ def _create_transaction_response(
             category_id=category.id,
             transaction_date=transaction_date,
             payment_method=payment_method,
-            source="whatsapp_text",
+            source=source,
             whatsapp_message_id=whatsapp_message_id,
         )
     except DuplicateWhatsAppMessageError:
@@ -245,6 +332,17 @@ def _create_transaction_response(
         user_name=user.name,
         variant=variant,
     )
+
+
+def _message_already_processed(whatsapp_message_id: str) -> bool:
+    if engine is None:
+        return False
+    with SessionLocal() as db:
+        transaction = get_transaction_by_whatsapp_message_id(
+            db,
+            whatsapp_message_id,
+        )
+        return transaction is not None
 
 
 def _query_total_response(

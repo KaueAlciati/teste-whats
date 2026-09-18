@@ -4,7 +4,10 @@ import os
 from fastapi import APIRouter, BackgroundTasks, Request, Response
 from dotenv import load_dotenv
 
-from backend.services.financial_assistant_service import process_financial_message
+from backend.services.financial_assistant_service import (
+    process_financial_audio_message,
+    process_financial_message,
+)
 
 load_dotenv()
 
@@ -37,6 +40,18 @@ async def receber_mensagem(request: Request, background_tasks: BackgroundTasks):
             destino,
             message_id,
             texto,
+        )
+
+    for destino, message_id, media_id, mime_type in extrair_mensagens_de_audio(
+        dados
+    ):
+        logger.info("Mensagem de áudio recebida de: %s", destino)
+        background_tasks.add_task(
+            process_financial_audio_message,
+            destino,
+            message_id,
+            media_id,
+            mime_type,
         )
 
     return {"status": "ok"}
@@ -101,6 +116,78 @@ def extrair_mensagens_de_texto(dados: object) -> list[tuple[str, str, str]]:
                     continue
 
                 mensagens_extraidas.append((destino, message_id, texto))
+
+    return mensagens_extraidas
+
+
+def extrair_mensagens_de_audio(
+    dados: object,
+) -> list[tuple[str, str, str, str | None]]:
+    mensagens_extraidas: list[tuple[str, str, str, str | None]] = []
+
+    if not isinstance(dados, dict):
+        return mensagens_extraidas
+
+    entries = dados.get("entry")
+    if not isinstance(entries, list):
+        return mensagens_extraidas
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+
+        changes = entry.get("changes")
+        if not isinstance(changes, list):
+            continue
+
+        for change in changes:
+            if not isinstance(change, dict):
+                continue
+
+            value = change.get("value")
+            if not isinstance(value, dict):
+                continue
+
+            metadata = value.get("metadata")
+            numero_proprio = ""
+            if isinstance(metadata, dict):
+                numero_proprio = _somente_digitos(
+                    metadata.get("display_phone_number")
+                )
+
+            messages = value.get("messages")
+            if not isinstance(messages, list):
+                continue
+
+            for message in messages:
+                if not isinstance(message, dict):
+                    continue
+                if message.get("type") != "audio" or message.get("is_echo") is True:
+                    continue
+
+                destino = message.get("from")
+                message_id = message.get("id")
+                audio = message.get("audio")
+                media_id = audio.get("id") if isinstance(audio, dict) else None
+                mime_type = (
+                    audio.get("mime_type") if isinstance(audio, dict) else None
+                )
+
+                if not all(
+                    isinstance(item, str)
+                    for item in (destino, message_id, media_id)
+                ):
+                    continue
+                if not destino or not message_id or not media_id:
+                    continue
+                if mime_type is not None and not isinstance(mime_type, str):
+                    mime_type = None
+                if numero_proprio and _somente_digitos(destino) == numero_proprio:
+                    continue
+
+                mensagens_extraidas.append(
+                    (destino, message_id, media_id, mime_type)
+                )
 
     return mensagens_extraidas
 

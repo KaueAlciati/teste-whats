@@ -63,6 +63,7 @@ class FinancialAssistantServiceTestCase(unittest.TestCase):
         self.assertIsNotNone(transaction)
         self.assertEqual(transaction.type, "expense")
         self.assertEqual(transaction.amount, Decimal("40.00"))
+        self.assertEqual(transaction.source, "whatsapp_text")
         self.assertIn("gasto salvo", response)
         self.assertIn("Gasolina — R$ 40,00", response)
         self.assertIn("Transporte", response)
@@ -93,6 +94,58 @@ class FinancialAssistantServiceTestCase(unittest.TestCase):
         self.assertIn("entrada já ficou registrada", response)
         self.assertIn("Salário — R$ 1.500,00", response)
         self.assertIn("Salário", response)
+
+    def test_audio_expense_uses_existing_flow_and_audio_source(self) -> None:
+        intent = self._intent(
+            action="create_expense",
+            amount=80,
+            description="diesel",
+            category="Transporte",
+            transaction_date="2026-09-18",
+        )
+
+        response = self._handle(
+            "gastei 80 reais de diesel hoje",
+            intent,
+            "audio-expense",
+            source="whatsapp_audio",
+        )
+
+        transaction = self.session.scalar(
+            select(FinancialTransaction).where(
+                FinancialTransaction.whatsapp_message_id == "audio-expense"
+            )
+        )
+        self.assertIsNotNone(transaction)
+        self.assertEqual(transaction.source, "whatsapp_audio")
+        self.assertEqual(transaction.amount, Decimal("80.00"))
+        self.assertIn("Diesel", response)
+
+    def test_audio_income_uses_existing_flow_and_audio_source(self) -> None:
+        intent = self._intent(
+            action="create_income",
+            amount=2500,
+            description="salário",
+            category="Salário",
+            transaction_date="2026-09-18",
+        )
+
+        response = self._handle(
+            "recebi dois mil e quinhentos de salário",
+            intent,
+            "audio-income",
+            source="whatsapp_audio",
+        )
+
+        transaction = self.session.scalar(
+            select(FinancialTransaction).where(
+                FinancialTransaction.whatsapp_message_id == "audio-income"
+            )
+        )
+        self.assertIsNotNone(transaction)
+        self.assertEqual(transaction.source, "whatsapp_audio")
+        self.assertEqual(transaction.amount, Decimal("2500.00"))
+        self.assertIn("R$ 2.500,00", response)
 
     def test_balance_query_is_calculated_by_backend(self) -> None:
         self._create_transaction("income", "1000.00", "balance-income")
@@ -175,6 +228,37 @@ class FinancialAssistantServiceTestCase(unittest.TestCase):
         transaction_count = self.session.scalar(
             select(func.count(FinancialTransaction.id)).where(
                 FinancialTransaction.whatsapp_message_id == "duplicate-id"
+            )
+        )
+        self.assertIsNotNone(first_response)
+        self.assertIsNone(second_response)
+        self.assertEqual(transaction_count, 1)
+
+    def test_duplicate_audio_creates_only_one_transaction(self) -> None:
+        intent = self._intent(
+            action="create_expense",
+            amount=50,
+            description="almoço",
+            category="Alimentação",
+        )
+
+        first_response = self._handle(
+            "paguei cinquenta reais no almoço",
+            intent,
+            "duplicate-audio-id",
+            source="whatsapp_audio",
+        )
+        second_response = self._handle(
+            "paguei cinquenta reais no almoço",
+            intent,
+            "duplicate-audio-id",
+            source="whatsapp_audio",
+        )
+
+        transaction_count = self.session.scalar(
+            select(func.count(FinancialTransaction.id)).where(
+                FinancialTransaction.whatsapp_message_id
+                == "duplicate-audio-id"
             )
         )
         self.assertIsNotNone(first_response)
@@ -334,6 +418,8 @@ class FinancialAssistantServiceTestCase(unittest.TestCase):
         text: str,
         intent: FinancialIntent,
         message_id: str,
+        *,
+        source: str = "whatsapp_text",
     ) -> str | None:
         with patch(
             "backend.services.financial_assistant_service.interpret_financial_message",
@@ -345,6 +431,7 @@ class FinancialAssistantServiceTestCase(unittest.TestCase):
                 text=text,
                 whatsapp_message_id=message_id,
                 current_date=self.current_date,
+                source=source,
             )
 
     def _create_transaction(
