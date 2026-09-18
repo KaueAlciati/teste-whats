@@ -4,8 +4,7 @@ import os
 from fastapi import APIRouter, BackgroundTasks, Request, Response
 from dotenv import load_dotenv
 
-from backend.services.user_service import register_whatsapp_user
-from backend.services.whatsapp_service import send_text_message
+from backend.services.financial_assistant_service import process_financial_message
 
 load_dotenv()
 
@@ -31,20 +30,20 @@ async def verificar_webhook(request: Request):
 async def receber_mensagem(request: Request, background_tasks: BackgroundTasks):
     dados = await request.json()
 
-    for destino, texto in extrair_mensagens_de_texto(dados):
+    for destino, message_id, texto in extrair_mensagens_de_texto(dados):
         logger.info("Mensagem de texto recebida de: %s", destino)
         background_tasks.add_task(
-            send_text_message,
+            process_financial_message,
             destino,
-            "Olá! Seu assistente financeiro está conectado ao WhatsApp ✅",
+            message_id,
+            texto,
         )
-        background_tasks.add_task(register_whatsapp_user, destino)
 
     return {"status": "ok"}
 
 
-def extrair_mensagens_de_texto(dados: object) -> list[tuple[str, str]]:
-    mensagens_extraidas: list[tuple[str, str]] = []
+def extrair_mensagens_de_texto(dados: object) -> list[tuple[str, str, str]]:
+    mensagens_extraidas: list[tuple[str, str, str]] = []
 
     if not isinstance(dados, dict):
         return mensagens_extraidas
@@ -87,17 +86,21 @@ def extrair_mensagens_de_texto(dados: object) -> list[tuple[str, str]]:
                     continue
 
                 destino = message.get("from")
+                message_id = message.get("id")
                 text = message.get("text")
                 texto = text.get("body") if isinstance(text, dict) else None
 
-                if not isinstance(destino, str) or not isinstance(texto, str):
+                if not all(
+                    isinstance(value, str)
+                    for value in (destino, message_id, texto)
+                ):
                     continue
-                if not destino or not texto:
+                if not destino or not message_id or not texto:
                     continue
                 if numero_proprio and _somente_digitos(destino) == numero_proprio:
                     continue
 
-                mensagens_extraidas.append((destino, texto))
+                mensagens_extraidas.append((destino, message_id, texto))
 
     return mensagens_extraidas
 

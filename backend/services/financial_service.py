@@ -104,6 +104,17 @@ def get_transaction(
     return db.scalar(statement)
 
 
+def get_transaction_by_whatsapp_message_id(
+    db: Session,
+    whatsapp_message_id: str,
+) -> FinancialTransaction | None:
+    return db.scalar(
+        select(FinancialTransaction).where(
+            FinancialTransaction.whatsapp_message_id == whatsapp_message_id
+        )
+    )
+
+
 def list_transactions(
     db: Session,
     *,
@@ -135,3 +146,42 @@ def calculate_balance(db: Session, *, user_id: int) -> Decimal:
         )
     )
     return Decimal(str(balance)).quantize(Decimal("0.01"))
+
+
+def has_transactions(db: Session, *, user_id: int) -> bool:
+    transaction_id = db.scalar(
+        select(FinancialTransaction.id)
+        .where(FinancialTransaction.user_id == user_id)
+        .limit(1)
+    )
+    return transaction_id is not None
+
+
+def calculate_total_by_type(
+    db: Session,
+    *,
+    user_id: int,
+    transaction_type: str,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> Decimal:
+    if transaction_type not in TRANSACTION_TYPES:
+        raise ValueError("Tipo de movimentação inválido")
+
+    statement = select(
+        func.coalesce(func.sum(FinancialTransaction.amount), 0)
+    ).where(
+        FinancialTransaction.user_id == user_id,
+        FinancialTransaction.type == transaction_type,
+    )
+    if start_date is not None:
+        statement = statement.where(
+            FinancialTransaction.transaction_date >= start_date
+        )
+    if end_date is not None:
+        statement = statement.where(
+            FinancialTransaction.transaction_date <= end_date
+        )
+
+    total = db.scalar(statement)
+    return Decimal(str(total)).quantize(Decimal("0.01"))
