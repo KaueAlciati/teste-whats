@@ -297,6 +297,101 @@ def audio_error_response() -> str:
     return "Não consegui processar esse áudio agora. Tenta novamente em alguns instantes."
 
 
+def image_processing_response(variant: int = 0) -> str:
+    responses = (
+        "Beleza, vou dar uma olhada nesse comprovante 👀",
+        "Um instante, vou analisar essa imagem.",
+        "Certo, já vou conferir esse comprovante 👀",
+    )
+    return responses[variant % len(responses)]
+
+
+def image_error_response() -> str:
+    return "Não consegui analisar essa imagem agora. Tenta novamente em alguns instantes."
+
+
+def image_too_large_response() -> str:
+    return "Essa imagem ficou grande demais. Pode enviar uma versão menor?"
+
+
+def image_unsupported_response() -> str:
+    return "Consigo analisar comprovantes em JPEG, PNG ou WebP. Pode enviar em um desses formatos?"
+
+
+def receipt_direction_confirmation(amount: Decimal) -> str:
+    return (
+        f"Consegui identificar um PIX de {format_brl(amount)}, mas não ficou claro "
+        "se esse valor foi pago ou recebido.\n\n"
+        "Foi um valor que você:\n"
+        "1. pagou\n"
+        "2. recebeu"
+    )
+
+
+def receipt_transaction_confirmation(
+    *,
+    transaction_type: TransactionType,
+    amount: Decimal,
+    description: str,
+    category: str,
+    transaction_date: date,
+    current_date: date,
+    counterparty: str | None = None,
+) -> str:
+    if transaction_type == "expense":
+        opening = "Vi o comprovante e já deixei salvo pra você 👌"
+        title = f"💸 {_display_text(description)} — {format_brl(amount)}"
+        party = f"\n👤 Para: {_display_text(counterparty)}" if counterparty else ""
+        category_line = f"\n📂 {category}"
+    else:
+        opening = "Boa, identifiquei esse recebimento e já registrei."
+        title = f"💰 {_display_text(description)} — {format_brl(amount)}"
+        party = f"\n👤 De: {_display_text(counterparty)}" if counterparty else ""
+        category_line = f"\n📂 {category}"
+
+    return (
+        f"{opening}\n\n"
+        f"{title}{party}{category_line}\n"
+        f"📅 {format_natural_date(transaction_date, current_date)}"
+    )
+
+
+def receipt_not_registered_response(
+    *,
+    document_type: str,
+    status: str,
+) -> str:
+    if status == "pending":
+        return "Esse pagamento ainda aparece como pendente. Não registrei nenhuma movimentação."
+    if status == "scheduled":
+        return "Essa imagem parece mostrar um agendamento. Ainda não registrei nenhuma movimentação."
+    if status == "cancelled":
+        return "Esse comprovante aparece como cancelado. Não registrei nenhuma movimentação."
+    if status == "refunded":
+        return "Essa imagem parece envolver devolução ou estorno. Não registrei automaticamente."
+    if document_type in {"invoice_image", "unknown"}:
+        return (
+            "Essa imagem não parece ser um comprovante único e concluído. "
+            "Ainda não registrei nada."
+        )
+    return "Não consegui confirmar os dados desse comprovante com segurança. Não registrei nada."
+
+
+def pending_receipt_expired_response() -> str:
+    return "Essa confirmação expirou. Envie o comprovante novamente para eu analisar."
+
+
+def pending_receipt_discarded_response() -> str:
+    return "Tudo bem, descartei esse comprovante e não registrei nada."
+
+
+def pending_receipt_amount_updated_response(amount: Decimal) -> str:
+    return (
+        f"Certo, ajustei o valor para {format_brl(amount)}. "
+        "Agora me diga se você pagou ou recebeu esse valor."
+    )
+
+
 def format_audio_understanding(
     transcription: str,
     response: str,

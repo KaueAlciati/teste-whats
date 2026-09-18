@@ -6,7 +6,12 @@ from sqlalchemy import create_engine, pool
 
 from backend.database.base import Base
 from backend.database.connection import normalize_database_url
-from backend.models import Category, FinancialTransaction, User  # noqa: F401
+from backend.models import (  # noqa: F401
+    Category,
+    FinancialTransaction,
+    PendingReceipt,
+    User,
+)
 
 
 config = context.config

@@ -7,7 +7,9 @@ import httpx
 
 from backend.services.whatsapp_media_service import (
     MAX_AUDIO_BYTES,
+    MAX_IMAGE_BYTES,
     WhatsAppMediaTooLargeError,
+    WhatsAppMediaUnsupportedTypeError,
     download_whatsapp_media,
 )
 
@@ -83,6 +85,92 @@ class WhatsAppMediaServiceTestCase(unittest.TestCase):
                     asyncio.run(download_whatsapp_media("large-media-id"))
 
         self.assertEqual(len(requests), 1)
+
+    def test_downloads_and_validates_image(self) -> None:
+        image_bytes = b"\x89PNG\r\n\x1a\n" + b"image-content"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.host == "graph.facebook.com":
+                return httpx.Response(
+                    200,
+                    json={
+                        "url": "https://lookaside.example/image",
+                        "mime_type": "image/png",
+                        "file_size": len(image_bytes),
+                    },
+                )
+            return httpx.Response(
+                200,
+                content=image_bytes,
+                headers={"content-type": "image/png"},
+            )
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with patch.dict(os.environ, {"WHATSAPP_TOKEN": "test-token"}, clear=True):
+            with patch(
+                "backend.services.whatsapp_media_service.httpx.AsyncClient",
+                return_value=client,
+            ):
+                media = asyncio.run(
+                    download_whatsapp_media(
+                        "image-media-id",
+                        media_kind="image",
+                    )
+                )
+
+        self.assertEqual(media.content, image_bytes)
+        self.assertEqual(media.mime_type, "image/png")
+        self.assertEqual(media.filename, "image.png")
+
+    def test_rejects_image_larger_than_ten_megabytes(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "url": "https://lookaside.example/image",
+                    "mime_type": "image/jpeg",
+                    "file_size": MAX_IMAGE_BYTES + 1,
+                },
+            )
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with patch.dict(os.environ, {"WHATSAPP_TOKEN": "test-token"}, clear=True):
+            with patch(
+                "backend.services.whatsapp_media_service.httpx.AsyncClient",
+                return_value=client,
+            ):
+                with self.assertRaises(WhatsAppMediaTooLargeError):
+                    asyncio.run(
+                        download_whatsapp_media(
+                            "large-image-id",
+                            media_kind="image",
+                        )
+                    )
+
+    def test_rejects_unexpected_image_mime_type(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "url": "https://lookaside.example/file",
+                    "mime_type": "application/x-msdownload",
+                    "file_size": 100,
+                },
+            )
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with patch.dict(os.environ, {"WHATSAPP_TOKEN": "test-token"}, clear=True):
+            with patch(
+                "backend.services.whatsapp_media_service.httpx.AsyncClient",
+                return_value=client,
+            ):
+                with self.assertRaises(WhatsAppMediaUnsupportedTypeError):
+                    asyncio.run(
+                        download_whatsapp_media(
+                            "invalid-image-id",
+                            media_kind="image",
+                        )
+                    )
 
 
 if __name__ == "__main__":

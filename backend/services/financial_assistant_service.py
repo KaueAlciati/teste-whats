@@ -54,6 +54,7 @@ from backend.services.financial_service import (
     has_transactions,
     update_transaction,
 )
+from backend.services.receipt_assistant_service import handle_pending_receipt_reply
 from backend.services.user_service import get_or_create_whatsapp_user
 from backend.services.whatsapp_media_service import (
     WhatsAppMediaError,
@@ -213,6 +214,16 @@ def handle_financial_message(
     processing_time = current_datetime or datetime.now(
         ZoneInfo("America/Sao_Paulo")
     )
+    pending_reply = handle_pending_receipt_reply(
+        db,
+        user=user,
+        text=text,
+        current_date=current_date,
+        current_time=processing_time,
+    )
+    if pending_reply.handled:
+        return pending_reply.response
+
     latest_transaction = get_latest_transaction_for_user(
         db,
         user_id=user.id,

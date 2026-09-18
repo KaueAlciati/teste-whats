@@ -1,5 +1,6 @@
 from backend.models.category import Category
 from backend.models.financial_transaction import FinancialTransaction
+from backend.models.pending_receipt import PendingReceipt
 from backend.models.user import User
 
-__all__ = ["Category", "FinancialTransaction", "User"]
+__all__ = ["Category", "FinancialTransaction", "PendingReceipt", "User"]

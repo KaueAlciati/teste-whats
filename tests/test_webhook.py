@@ -86,6 +86,27 @@ class WebhookTestCase(unittest.TestCase):
             "audio/ogg; codecs=opus",
         )
 
+    def test_image_message_schedules_receipt_assistant_with_caption(self) -> None:
+        payload = self._image_payload("wamid.image-message")
+        process_mock = AsyncMock(return_value=None)
+
+        with patch.object(
+            webhook,
+            "process_financial_image_message",
+            process_mock,
+        ):
+            response = self.client.post("/webhook", json=payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+        process_mock.assert_awaited_once_with(
+            "5515999999999",
+            "wamid.image-message",
+            "image-media-id",
+            "image/jpeg",
+            "paguei isso",
+        )
+
     def test_audio_download_error_does_not_break_webhook(self) -> None:
         send_mock = AsyncMock(return_value=True)
 
@@ -250,6 +271,28 @@ class WebhookTestCase(unittest.TestCase):
                             "audio": {
                                 "id": "media-id",
                                 "mime_type": "audio/ogg; codecs=opus",
+                            },
+                        }],
+                    }
+                }]
+            }]
+        }
+
+    @staticmethod
+    def _image_payload(message_id: str) -> dict[str, object]:
+        return {
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "metadata": {"display_phone_number": "5511000000000"},
+                        "messages": [{
+                            "from": "5515999999999",
+                            "id": message_id,
+                            "type": "image",
+                            "image": {
+                                "id": "image-media-id",
+                                "mime_type": "image/jpeg",
+                                "caption": "paguei isso",
                             },
                         }],
                     }
