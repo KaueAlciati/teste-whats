@@ -1,12 +1,16 @@
+import logging
 import os
 from datetime import date
 
-from openai import OpenAI
+from openai import APIStatusError, OpenAI, OpenAIError
 
 from backend.schemas.financial_intent import FinancialIntent
 
 
-DEFAULT_OPENAI_MODEL = "gpt-5.6-luna"
+logger = logging.getLogger("uvicorn.error")
+
+DEFAULT_AI_MODEL = "openai/gpt-oss-20b"
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
 EXPENSE_CATEGORIES = (
     "Alimentação",
@@ -40,12 +44,16 @@ def interpret_financial_message(
     text: str,
     current_date: date,
 ) -> FinancialIntent:
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = os.getenv("GROQ_API_KEY")
+    provider = os.getenv("AI_PROVIDER", "groq")
+    model = os.getenv("AI_MODEL", DEFAULT_AI_MODEL)
+
+    logger.info("AI_PROVIDER: %s", provider)
+    logger.info("AI_MODEL: %s", model)
+    logger.info("GROQ_API_KEY configurada: %s", bool(api_key))
+
     if not api_key:
         raise FinancialAIServiceError("Serviço de IA indisponível")
-
-    model = os.getenv("OPENAI_MODEL") or DEFAULT_OPENAI_MODEL
-    client = OpenAI(api_key=api_key, timeout=20.0, max_retries=1)
 
     instructions = f"""
 Você interpreta mensagens financeiras pessoais escritas em português do Brasil.
@@ -75,14 +83,30 @@ marque needs_clarification como true e formule uma pergunta curta em pt-BR.
 """.strip()
 
     try:
+        client = OpenAI(
+            api_key=api_key,
+            base_url=GROQ_BASE_URL,
+            timeout=20.0,
+            max_retries=1,
+        )
         response = client.responses.parse(
             model=model,
             instructions=instructions,
             input=f"Mensagem original: {text}",
             text_format=FinancialIntent,
-            store=False,
         )
+    except APIStatusError as exc:
+        logger.error(
+            "Erro da Groq: status HTTP=%s; tipo=%s",
+            exc.status_code,
+            type(exc).__name__,
+        )
+        raise FinancialAIServiceError("Falha ao interpretar mensagem") from exc
+    except OpenAIError as exc:
+        logger.error("Erro da Groq: tipo=%s", type(exc).__name__)
+        raise FinancialAIServiceError("Falha ao interpretar mensagem") from exc
     except Exception as exc:
+        logger.error("Erro da Groq: tipo=%s", type(exc).__name__)
         raise FinancialAIServiceError("Falha ao interpretar mensagem") from exc
 
     if response.output_parsed is None:
