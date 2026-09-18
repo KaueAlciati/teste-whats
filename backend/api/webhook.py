@@ -4,6 +4,7 @@ import os
 from fastapi import APIRouter, BackgroundTasks, Request, Response
 from dotenv import load_dotenv
 
+from backend.services.user_service import register_whatsapp_user
 from backend.services.whatsapp_service import send_text_message
 
 load_dotenv()
@@ -37,6 +38,7 @@ async def receber_mensagem(request: Request, background_tasks: BackgroundTasks):
             destino,
             "Olá! Seu assistente financeiro está conectado ao WhatsApp ✅",
         )
+        background_tasks.add_task(register_whatsapp_user, destino)
 
     return {"status": "ok"}
 
