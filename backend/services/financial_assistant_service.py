@@ -15,6 +15,17 @@ from backend.services.ai_financial_service import (
     interpret_financial_message,
 )
 from backend.services.category_service import find_category_or_default
+from backend.services.conversation_service import (
+    ai_error_response,
+    balance_response,
+    clarification_response,
+    no_transactions_response,
+    non_financial_response,
+    operation_error_response,
+    response_variant,
+    total_response,
+    transaction_confirmation,
+)
 from backend.services.financial_service import (
     DuplicateWhatsAppMessageError,
     calculate_balance,
@@ -29,18 +40,9 @@ from backend.services.whatsapp_service import send_text_message
 
 logger = logging.getLogger("uvicorn.error")
 
-AI_ERROR_MESSAGE = (
-    "Tive um problema para entender sua mensagem. "
-    "Tente novamente em alguns instantes."
-)
-DATABASE_ERROR_MESSAGE = (
-    "Tive um problema para acessar suas finanças. "
-    "Tente novamente em alguns instantes."
-)
-UNKNOWN_MESSAGE = (
-    "Posso te ajudar a registrar gastos e receitas ou consultar suas finanças. "
-    "Pode falar normalmente, por exemplo: 'gastei 30 reais de gasolina'."
-)
+AI_ERROR_MESSAGE = ai_error_response()
+DATABASE_ERROR_MESSAGE = operation_error_response()
+UNKNOWN_MESSAGE = non_financial_response("")
 
 
 async def process_financial_message(
@@ -101,9 +103,15 @@ def handle_financial_message(
         return None
 
     intent = interpret_financial_message(text, current_date)
+    variant = response_variant(whatsapp_message_id)
 
     if intent.needs_clarification:
-        return intent.clarification_question or "Pode me dar mais detalhes?"
+        return clarification_response(
+            action=intent.action,
+            question=intent.clarification_question,
+            missing_amount=intent.amount is None,
+            missing_description=not bool((intent.description or "").strip()),
+        )
 
     if intent.action == "create_expense":
         return _create_transaction_response(
@@ -113,6 +121,7 @@ def handle_financial_message(
             transaction_type="expense",
             whatsapp_message_id=whatsapp_message_id,
             current_date=current_date,
+            variant=variant,
         )
 
     if intent.action == "create_income":
@@ -123,13 +132,21 @@ def handle_financial_message(
             transaction_type="income",
             whatsapp_message_id=whatsapp_message_id,
             current_date=current_date,
+            variant=variant,
         )
 
     if intent.action == "query_balance":
         if not has_transactions(db, user_id=user.id):
-            return "Você ainda não possui movimentações registradas."
+            return no_transactions_response(
+                user_name=user.name,
+                variant=variant,
+            )
         balance = calculate_balance(db, user_id=user.id)
-        return f"💰 Seu saldo atual é {_format_currency(balance)}."
+        return balance_response(
+            balance,
+            user_name=user.name,
+            variant=variant,
+        )
 
     if intent.action == "query_expenses":
         return _query_total_response(
@@ -138,6 +155,7 @@ def handle_financial_message(
             transaction_type="expense",
             period=intent.period or "all",
             current_date=current_date,
+            variant=variant,
         )
 
     if intent.action == "query_income":
@@ -147,9 +165,14 @@ def handle_financial_message(
             transaction_type="income",
             period=intent.period or "all",
             current_date=current_date,
+            variant=variant,
         )
 
-    return UNKNOWN_MESSAGE
+    return non_financial_response(
+        text,
+        user_name=user.name,
+        variant=variant,
+    )
 
 
 def _create_transaction_response(
@@ -160,6 +183,7 @@ def _create_transaction_response(
     transaction_type: str,
     whatsapp_message_id: str,
     current_date: date,
+    variant: int,
 ) -> str | None:
     if intent.amount is None:
         return "Qual foi o valor da movimentação?"
@@ -211,13 +235,15 @@ def _create_transaction_response(
     except DuplicateWhatsAppMessageError:
         return None
 
-    title = "Gasto registrado" if transaction_type == "expense" else "Receita registrada"
-    return (
-        f"✅ {title}\n\n"
-        f"💰 {_format_currency(transaction.amount)}\n"
-        f"📝 {transaction.description.strip().capitalize()}\n"
-        f"🗂️ {category.name}\n"
-        f"📅 {transaction.transaction_date.strftime('%d/%m/%Y')}"
+    return transaction_confirmation(
+        transaction_type=transaction_type,
+        amount=transaction.amount,
+        description=transaction.description,
+        category=category.name,
+        transaction_date=transaction.transaction_date,
+        current_date=current_date,
+        user_name=user.name,
+        variant=variant,
     )
 
 
@@ -228,6 +254,7 @@ def _query_total_response(
     transaction_type: str,
     period: FinancialPeriod,
     current_date: date,
+    variant: int,
 ) -> str:
     start_date, end_date = _period_bounds(period, current_date)
     total = calculate_total_by_type(
@@ -237,16 +264,13 @@ def _query_total_response(
         start_date=start_date,
         end_date=end_date,
     )
-    period_label = _period_label(period)
-
-    if transaction_type == "expense":
-        if total == 0:
-            return f"Você não teve gastos {period_label}."
-        return f"📊 Você gastou {_format_currency(total)} {period_label}."
-
-    if total == 0:
-        return f"Você não recebeu receitas {period_label}."
-    return f"💰 Você recebeu {_format_currency(total)} {period_label}."
+    return total_response(
+        transaction_type=transaction_type,
+        total=total,
+        period=period,
+        user_name=user.name,
+        variant=variant,
+    )
 
 
 def _parse_transaction_date(
@@ -279,21 +303,3 @@ def _period_bounds(
         previous_month_end = current_month_start - timedelta(days=1)
         return previous_month_end.replace(day=1), previous_month_end
     return None, None
-
-
-def _period_label(period: FinancialPeriod) -> str:
-    labels = {
-        "today": "hoje",
-        "yesterday": "ontem",
-        "current_week": "nesta semana",
-        "current_month": "neste mês",
-        "previous_month": "no mês passado",
-        "all": "no total",
-    }
-    return labels[period]
-
-
-def _format_currency(value: Decimal) -> str:
-    formatted = f"{value.quantize(Decimal('0.01')):,.2f}"
-    formatted = formatted.replace(",", "_").replace(".", ",").replace("_", ".")
-    return f"R$ {formatted}"

@@ -114,6 +114,10 @@ class AIFinancialServiceTestCase(unittest.TestCase):
                     self.assertIs(call_arguments["text_format"], FinancialIntent)
                     self.assertNotIn("store", call_arguments)
                     self.assertIn(message, call_arguments["input"])
+                    self.assertIn(
+                        "objeto ou motivo curto",
+                        call_arguments["instructions"],
+                    )
 
     def test_uses_configured_model(self) -> None:
         intent = FinancialIntent(

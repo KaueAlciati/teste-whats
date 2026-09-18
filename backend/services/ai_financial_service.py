@@ -68,6 +68,14 @@ Categorias de despesa permitidas: {", ".join(EXPENSE_CATEGORIES)}.
 Categorias de receita permitidas: {", ".join(INCOME_CATEGORIES)}.
 Sugira somente uma dessas categorias. Se nenhuma combinar, use Outros.
 
+Em description, extraia apenas o objeto ou motivo curto da movimentação.
+Não repita a frase inteira do usuário e não inclua valor, data ou verbo da ação.
+Exemplos:
+- "gastei 40 reais de gasolina" vira "gasolina";
+- "paguei 89,90 no mercado" vira "mercado";
+- "recebi 1500 do trabalho" vira "trabalho".
+Se não houver informação suficiente para uma descrição, não invente.
+
 Ações permitidas:
 - create_expense para gastos e pagamentos;
 - create_income para dinheiro recebido;

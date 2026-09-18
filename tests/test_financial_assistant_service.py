@@ -5,6 +5,7 @@ from decimal import Decimal
 from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import create_engine, func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 
 from backend.database.base import Base
@@ -13,6 +14,7 @@ from backend.schemas.financial_intent import FinancialIntent
 from backend.services.ai_financial_service import FinancialAIServiceError
 from backend.services.financial_assistant_service import (
     AI_ERROR_MESSAGE,
+    DATABASE_ERROR_MESSAGE,
     UNKNOWN_MESSAGE,
     handle_financial_message,
     process_financial_message,
@@ -61,7 +63,8 @@ class FinancialAssistantServiceTestCase(unittest.TestCase):
         self.assertIsNotNone(transaction)
         self.assertEqual(transaction.type, "expense")
         self.assertEqual(transaction.amount, Decimal("40.00"))
-        self.assertIn("Gasto registrado", response)
+        self.assertIn("gasto salvo", response)
+        self.assertIn("Gasolina — R$ 40,00", response)
         self.assertIn("Transporte", response)
 
     def test_income_message_creates_income(self) -> None:
@@ -87,7 +90,8 @@ class FinancialAssistantServiceTestCase(unittest.TestCase):
         self.assertIsNotNone(transaction)
         self.assertEqual(transaction.type, "income")
         self.assertEqual(transaction.amount, Decimal("1500.00"))
-        self.assertIn("Receita registrada", response)
+        self.assertIn("entrada já ficou registrada", response)
+        self.assertIn("Salário — R$ 1.500,00", response)
         self.assertIn("Salário", response)
 
     def test_balance_query_is_calculated_by_backend(self) -> None:
@@ -97,7 +101,10 @@ class FinancialAssistantServiceTestCase(unittest.TestCase):
 
         response = self._handle("quanto eu tenho?", intent, "balance-query")
 
-        self.assertEqual(response, "💰 Seu saldo atual é R$ 749,75.")
+        self.assertEqual(
+            response,
+            "Você está com R$ 749,75 de saldo no momento.",
+        )
 
     def test_expense_query_uses_current_month_period(self) -> None:
         self._create_transaction(
@@ -123,7 +130,10 @@ class FinancialAssistantServiceTestCase(unittest.TestCase):
             "expense-query",
         )
 
-        self.assertEqual(response, "📊 Você gastou R$ 40,00 neste mês.")
+        self.assertEqual(
+            response,
+            "Até agora você gastou R$ 40,00 neste mês.",
+        )
 
     def test_income_query_uses_current_month_period(self) -> None:
         self._create_transaction(
@@ -149,7 +159,7 @@ class FinancialAssistantServiceTestCase(unittest.TestCase):
             "income-query",
         )
 
-        self.assertEqual(response, "💰 Você recebeu R$ 3.200,00 neste mês.")
+        self.assertEqual(response, "Você recebeu R$ 3.200,00 neste mês.")
 
     def test_duplicate_message_creates_only_one_transaction(self) -> None:
         intent = self._intent(
@@ -232,7 +242,8 @@ class FinancialAssistantServiceTestCase(unittest.TestCase):
 
         response = self._handle("qual a capital do Brasil?", intent, "unknown-id")
 
-        self.assertEqual(response, UNKNOWN_MESSAGE)
+        self.assertIn("organização financeira", response)
+        self.assertNotEqual(response, UNKNOWN_MESSAGE)
         self.assertEqual(self._transaction_count(), 0)
 
     def test_different_users_do_not_share_balances(self) -> None:
@@ -292,6 +303,31 @@ class FinancialAssistantServiceTestCase(unittest.TestCase):
                 )
 
         send_mock.assert_awaited_once_with("5515999999999", AI_ERROR_MESSAGE)
+
+    def test_database_error_does_not_send_success_message(self) -> None:
+        send_mock = AsyncMock(return_value=True)
+        with patch(
+            "backend.services.financial_assistant_service._process_financial_message",
+            side_effect=SQLAlchemyError("database unavailable"),
+        ):
+            with patch(
+                "backend.services.financial_assistant_service.send_text_message",
+                send_mock,
+            ):
+                asyncio.run(
+                    process_financial_message(
+                        "5515999999999",
+                        "database-error-id",
+                        "gastei 10 reais em chocolate",
+                    )
+                )
+
+        send_mock.assert_awaited_once_with(
+            "5515999999999",
+            DATABASE_ERROR_MESSAGE,
+        )
+        self.assertNotIn("registrei", DATABASE_ERROR_MESSAGE)
+        self.assertNotIn("salvo", DATABASE_ERROR_MESSAGE)
 
     def _handle(
         self,
