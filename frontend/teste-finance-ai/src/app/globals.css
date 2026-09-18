@@ -1,0 +1,97 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* O app é escuro por padrão em todas as telas (o body usa bg-background/
+   text-foreground sempre), então os tokens abaixo seguem essa mesma
+   paleta para os componentes de src/components/ui/ ficarem visualmente
+   consistentes com o resto do app, em vez de usar as cores padrão do
+   shadcn/ui que nunca foram definidas aqui.
+
+   As cores usam a escala zinc/emerald/rose redefinida em tailwind.config.js
+   (ver comentários lá) — aqui elas só são "fixadas" em variáveis CSS para
+   os componentes que precisam de um valor único, fora da escala 50-950. */
+:root {
+  --background: hsl(162, 18%, 6%);
+  --foreground: hsl(150, 14%, 93%);
+
+  --border: hsl(156, 10%, 21%);
+  --ring: #1baf80;
+
+  --card: hsl(160, 14%, 9%);
+  --card-foreground: hsl(150, 14%, 93%);
+
+  --muted: hsl(158, 12%, 14%);
+  --muted-foreground: hsl(150, 6%, 56%);
+
+  --primary: #1baf80;
+  --primary-foreground: #04120b;
+
+  --destructive: #ef4a5f;
+  --destructive-foreground: #ffffff;
+
+  --radius: 0.75rem;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Números financeiros (saldos, valores de transação, % de metas) usam a
+   mono em todo o app — ver AGENTS.md/docs para o motivo. Essa classe
+   também liga tabular-nums, pra dígitos não "dançarem" de largura quando
+   o valor muda (ex: R$ 9,00 -> R$ 10,00). */
+.font-figures {
+  font-family: var(--font-mono), ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* Respeita a preferência do usuário por menos animação (ex: iOS ->
+   Ajustes -> Acessibilidade -> Reduzir Movimento). Sem isso, transições
+   como a do menu mobile e dos modais ignoram essa preferência. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Entrada suave usada nos cards de Insights/Dashboard — a regra de
+   prefers-reduced-motion acima já neutraliza isso para quem pediu
+   menos movimento, então não precisa de guarda própria aqui. */
+@keyframes fade-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-slide-up {
+  animation: fade-slide-up 0.4s ease-out both;
+}
+
+/* Pulso bem sutil (opacidade, não tamanho) para o indicador "IA
+   processando" — precisa ser discreto, não uma barra de carregamento
+   gritante. */
+@keyframes ai-pulse {
+  0%, 100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.animate-ai-pulse {
+  animation: ai-pulse 1.6s ease-in-out infinite;
+}
