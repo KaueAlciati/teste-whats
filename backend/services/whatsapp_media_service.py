@@ -65,6 +65,8 @@ async def download_whatsapp_media(
         media_url = metadata.get("url")
         if not isinstance(media_url, str) or not media_url:
             raise WhatsAppMediaError("URL de mídia ausente")
+        if media_kind == "image":
+            logger.info("URL temporária da Meta obtida")
 
         max_bytes = _max_bytes_for_kind(media_kind)
         declared_size = _parse_size(metadata.get("file_size"))
@@ -76,6 +78,8 @@ async def download_whatsapp_media(
             fallback_mime_type,
         )
         _validate_mime_type(mime_type, media_kind)
+        if media_kind == "image":
+            logger.info("mime_type válido: mime_type=%s", mime_type)
         content = await _download_limited(
             client,
             media_url=media_url,

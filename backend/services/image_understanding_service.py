@@ -1,9 +1,11 @@
 import base64
+import json
 import logging
 import os
 from datetime import date
 
 from openai import APIStatusError, OpenAI, OpenAIError
+from pydantic import ValidationError
 
 from backend.schemas.receipt_extraction import ReceiptExtraction
 
@@ -12,6 +14,7 @@ logger = logging.getLogger("uvicorn.error")
 
 DEFAULT_VISION_MODEL = "qwen/qwen3.6-27b"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+GROQ_RESPONSES_ENDPOINT = f"{GROQ_BASE_URL}/responses"
 SUPPORTED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
 
@@ -46,9 +49,14 @@ def analyze_receipt_image(
     safe_caption = " ".join((caption or "").split())[:500] or "Sem legenda."
     safe_user_name = " ".join((user_name or "").split())[:120] or "Não informado."
 
+    json_schema = json.dumps(
+        ReceiptExtraction.model_json_schema(),
+        ensure_ascii=False,
+    )
     instructions = f"""
 Analise uma única imagem como possível documento financeiro brasileiro e retorne
-somente os dados do schema. A data atual é {current_date.isoformat()}.
+somente um objeto JSON compatível com o schema abaixo. Não use Markdown.
+A data atual é {current_date.isoformat()}.
 
 Prioridades:
 - identifique o valor TOTAL da transação, nunca o saldo da conta nem uma taxa;
@@ -75,16 +83,27 @@ Somente uma transação concluída, única e clara pode dispensar confirmação.
 Print de saldo/extrato, QR Code sem pagamento concluído, imagem genérica, ilegível,
 agendada, cancelada, pendente, devolvida ou estornada deve exigir confirmação ou ser
 classificada como unknown, sem inventar uma transação.
+
+JSON Schema obrigatório:
+{json_schema}
 """.strip()
 
     try:
+        logger.info(
+            "Enviando imagem para Groq Vision: endpoint=%s model=%s "
+            "mime_type=%s image_size_bytes=%s",
+            GROQ_RESPONSES_ENDPOINT,
+            model,
+            normalized_mime_type,
+            len(image_bytes),
+        )
         client = OpenAI(
             api_key=api_key,
             base_url=GROQ_BASE_URL,
             timeout=30.0,
             max_retries=1,
         )
-        response = client.responses.parse(
+        response = client.responses.create(
             model=model,
             instructions=instructions,
             input=[
@@ -103,31 +122,75 @@ classificada como unknown, sem inventar uma transação.
                     ],
                 }
             ],
-            text_format=ReceiptExtraction,
+            text={"format": {"type": "json_object"}},
         )
+        logger.info("Groq respondeu")
     except APIStatusError as exc:
         logger.error(
-            "Erro da visão Groq: status HTTP=%s; tipo=%s",
+            "Erro da visão Groq: status HTTP=%s tipo=%s mensagem=%s",
             exc.status_code,
             type(exc).__name__,
+            _safe_provider_message(exc),
         )
         raise ImageUnderstandingError("Falha ao analisar imagem") from exc
     except OpenAIError as exc:
-        logger.error("Erro da visão Groq: tipo=%s", type(exc).__name__)
+        logger.error(
+            "Erro da visão Groq: tipo=%s mensagem=%s",
+            type(exc).__name__,
+            _safe_provider_message(exc),
+        )
         raise ImageUnderstandingError("Falha ao analisar imagem") from exc
     except Exception as exc:
-        logger.error("Erro da visão Groq: tipo=%s", type(exc).__name__)
+        logger.exception("Erro inesperado da visão Groq: tipo=%s", type(exc).__name__)
         raise ImageUnderstandingError("Falha ao analisar imagem") from exc
 
-    if response.output_parsed is None:
+    output_text = response.output_text
+    if not isinstance(output_text, str) or not output_text.strip():
+        logger.error("Resposta JSON da visão ausente")
         raise ImageUnderstandingError("Resposta estruturada ausente")
 
-    extraction = response.output_parsed
+    logger.info("JSON recebido")
+    try:
+        payload = json.loads(output_text)
+    except json.JSONDecodeError as exc:
+        logger.error(
+            "JSON inválido da visão: tipo=%s linha=%s coluna=%s",
+            type(exc).__name__,
+            exc.lineno,
+            exc.colno,
+        )
+        raise ImageUnderstandingError("JSON de visão inválido") from exc
+
+    try:
+        extraction = ReceiptExtraction.model_validate(payload)
+    except ValidationError as exc:
+        invalid_fields = sorted(
+            {
+                ".".join(str(part) for part in error["loc"])
+                for error in exc.errors(include_input=False)
+            }
+        )
+        logger.error(
+            "ReceiptExtraction rejeitado: tipo=%s campos=%s",
+            type(exc).__name__,
+            ",".join(invalid_fields),
+        )
+        raise ImageUnderstandingError("Dados de visão inválidos") from exc
+
+    logger.info("ReceiptExtraction validado")
     logger.info(
         "Análise de comprovante concluída: confidence=%.2f direction=%s "
-        "requires_confirmation=%s",
+        "status=%s requires_confirmation=%s",
         extraction.confidence,
         extraction.direction,
+        extraction.status,
         extraction.requires_confirmation,
     )
     return extraction
+
+
+def _safe_provider_message(exc: Exception) -> str:
+    message = " ".join(str(exc).split())
+    if "data:image" in message.casefold():
+        return "requisição de imagem rejeitada pelo provedor"
+    return message[:300]

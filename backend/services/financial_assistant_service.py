@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import unicodedata
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
@@ -40,6 +41,8 @@ from backend.services.conversation_service import (
     no_transactions_response,
     non_financial_response,
     operation_error_response,
+    pending_audio_expired_response,
+    pending_audio_rejected_response,
     response_variant,
     total_response,
     transaction_confirmation,
@@ -53,6 +56,13 @@ from backend.services.financial_service import (
     get_transaction_by_whatsapp_message_id,
     has_transactions,
     update_transaction,
+)
+from backend.services.pending_audio_confirmation_service import (
+    create_pending_audio_confirmation,
+    delete_pending_audio_confirmation,
+    get_latest_pending_audio_for_user,
+    get_pending_audio_by_message_id,
+    pending_audio_is_expired,
 )
 from backend.services.receipt_assistant_service import handle_pending_receipt_reply
 from backend.services.user_service import get_or_create_whatsapp_user
@@ -207,6 +217,9 @@ def handle_financial_message(
     source: str = "whatsapp_text",
     current_datetime: datetime | None = None,
     audio_transcription: str | None = None,
+    confirmed_audio: bool = False,
+    pending_audio_correction: str | None = None,
+    skip_pending_context: bool = False,
 ) -> str | None:
     if get_transaction_by_whatsapp_message_id(db, whatsapp_message_id) is not None:
         return None
@@ -214,15 +227,26 @@ def handle_financial_message(
     processing_time = current_datetime or datetime.now(
         ZoneInfo("America/Sao_Paulo")
     )
-    pending_reply = handle_pending_receipt_reply(
-        db,
-        user=user,
-        text=text,
-        current_date=current_date,
-        current_time=processing_time,
-    )
-    if pending_reply.handled:
-        return pending_reply.response
+    if not skip_pending_context:
+        audio_pending_handled, audio_pending_response = _handle_pending_audio_reply(
+            db,
+            user=user,
+            text=text,
+            current_date=current_date,
+            current_time=processing_time,
+        )
+        if audio_pending_handled:
+            return audio_pending_response
+
+        pending_reply = handle_pending_receipt_reply(
+            db,
+            user=user,
+            text=text,
+            current_date=current_date,
+            current_time=processing_time,
+        )
+        if pending_reply.handled:
+            return pending_reply.response
 
     latest_transaction = get_latest_transaction_for_user(
         db,
@@ -236,7 +260,8 @@ def handle_financial_message(
     intent = interpret_financial_message(
         text,
         current_date,
-        last_transaction_context=latest_context,
+        last_transaction_context=None if confirmed_audio else latest_context,
+        pending_audio_correction=pending_audio_correction,
     )
     variant = response_variant(whatsapp_message_id)
 
@@ -246,8 +271,24 @@ def handle_financial_message(
         and intent.action
         in {"create_expense", "create_income", "correct_last_transaction"}
         and intent.confidence < AUDIO_AUTO_REGISTER_CONFIDENCE_THRESHOLD
+        and not confirmed_audio
     ):
+        create_pending_audio_confirmation(
+            db,
+            user_id=user.id,
+            original_whatsapp_message_id=whatsapp_message_id,
+            transcription=audio_transcription,
+            current_time=processing_time,
+        )
         return format_audio_confirmation(audio_transcription)
+
+    if confirmed_audio and intent.action in {
+        "correct_last_transaction",
+        "cancel_last_transaction",
+    }:
+        return format_correction_clarification(
+            "Não consegui aplicar essa correção ao áudio. Pode me dizer a movimentação completa?"
+        )
 
     def present(response: str | None) -> str | None:
         if response is None:
@@ -605,6 +646,112 @@ def _latest_transaction_context(
     )
 
 
+def _handle_pending_audio_reply(
+    db: Session,
+    *,
+    user: User,
+    text: str,
+    current_date: date,
+    current_time: datetime,
+) -> tuple[bool, str | None]:
+    reply_type = _classify_pending_audio_reply(text)
+    if reply_type is None:
+        return False, None
+
+    pending = get_latest_pending_audio_for_user(db, user_id=user.id)
+    if pending is None:
+        return False, None
+
+    if pending_audio_is_expired(pending, current_time=current_time):
+        delete_pending_audio_confirmation(
+            db,
+            pending=pending,
+            user_id=user.id,
+        )
+        return True, pending_audio_expired_response()
+
+    if reply_type == "negative":
+        delete_pending_audio_confirmation(
+            db,
+            pending=pending,
+            user_id=user.id,
+        )
+        return True, pending_audio_rejected_response()
+
+    correction = text if reply_type == "correction" else None
+    response = handle_financial_message(
+        db,
+        user=user,
+        text=pending.transcription,
+        whatsapp_message_id=pending.original_whatsapp_message_id,
+        current_date=current_date,
+        source="whatsapp_audio",
+        current_datetime=current_time,
+        audio_transcription=pending.transcription,
+        confirmed_audio=True,
+        pending_audio_correction=correction,
+        skip_pending_context=True,
+    )
+    delete_pending_audio_confirmation(
+        db,
+        pending=pending,
+        user_id=user.id,
+    )
+    return True, response
+
+
+def _classify_pending_audio_reply(text: str) -> str | None:
+    normalized = _normalize_confirmation_text(text)
+    positive_replies = {
+        "sim",
+        "isso",
+        "isso mesmo",
+        "correto",
+        "certo",
+        "e isso",
+        "exatamente",
+        "pode",
+        "pode registrar",
+        "isso ai",
+    }
+    negative_replies = {
+        "nao",
+        "errado",
+        "entendeu errado",
+        "nao foi isso",
+    }
+    if normalized in positive_replies:
+        return "positive"
+    if normalized in negative_replies:
+        return "negative"
+    if normalized.startswith(
+        (
+            "nao ",
+            "errado ",
+            "entendeu errado ",
+            "nao foi isso ",
+            "na verdade ",
+        )
+    ):
+        return "correction"
+    return None
+
+
+def _normalize_confirmation_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value.casefold().strip())
+    without_accents = "".join(
+        character
+        for character in normalized
+        if not unicodedata.combining(character)
+    )
+    return " ".join(
+        "".join(
+            character if character.isalnum() else " "
+            for character in without_accents
+        ).split()
+    )
+
+
 def _message_already_processed(whatsapp_message_id: str) -> bool:
     if engine is None:
         return False
@@ -613,7 +760,11 @@ def _message_already_processed(whatsapp_message_id: str) -> bool:
             db,
             whatsapp_message_id,
         )
-        return transaction is not None
+        pending_audio = get_pending_audio_by_message_id(
+            db,
+            whatsapp_message_id,
+        )
+        return transaction is not None or pending_audio is not None
 
 
 def _query_total_response(

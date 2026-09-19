@@ -122,6 +122,52 @@ class WhatsAppMediaServiceTestCase(unittest.TestCase):
         self.assertEqual(media.mime_type, "image/png")
         self.assertEqual(media.filename, "image.png")
 
+    def test_accepts_jpeg_and_webp_images(self) -> None:
+        supported_images = (
+            ("image/jpeg", b"\xff\xd8\xffimage", "image.jpg"),
+            ("image/webp", b"RIFF\x04\x00\x00\x00WEBPimage", "image.webp"),
+        )
+
+        for mime_type, image_bytes, expected_filename in supported_images:
+            with self.subTest(mime_type=mime_type):
+                def handler(request: httpx.Request) -> httpx.Response:
+                    if request.url.host == "graph.facebook.com":
+                        return httpx.Response(
+                            200,
+                            json={
+                                "url": "https://lookaside.example/image",
+                                "mime_type": mime_type,
+                                "file_size": len(image_bytes),
+                            },
+                        )
+                    return httpx.Response(
+                        200,
+                        content=image_bytes,
+                        headers={"content-type": mime_type},
+                    )
+
+                client = httpx.AsyncClient(
+                    transport=httpx.MockTransport(handler)
+                )
+                with patch.dict(
+                    os.environ,
+                    {"WHATSAPP_TOKEN": "test-token"},
+                    clear=True,
+                ):
+                    with patch(
+                        "backend.services.whatsapp_media_service.httpx.AsyncClient",
+                        return_value=client,
+                    ):
+                        media = asyncio.run(
+                            download_whatsapp_media(
+                                f"{mime_type}-id",
+                                media_kind="image",
+                            )
+                        )
+
+                self.assertEqual(media.mime_type, mime_type)
+                self.assertEqual(media.filename, expected_filename)
+
     def test_rejects_image_larger_than_ten_megabytes(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(

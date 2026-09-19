@@ -110,6 +110,24 @@ class ReceiptProcessingTestCase(unittest.TestCase):
         self.assertIsNone(self._pending("image-caption-direction"))
         self.assertIn("salvo", response)
 
+    def test_natural_received_caption_resolves_inflow(self) -> None:
+        response = self._process(
+            "image-caption-inflow",
+            self._extraction(
+                direction="unknown",
+                requires_confirmation=True,
+                payer_name="Cliente",
+                recipient_name=None,
+            ),
+            caption="Recebi um pix, guarda pra mim",
+        )
+
+        transaction = self._transaction("image-caption-inflow")
+        self.assertIsNotNone(transaction)
+        self.assertEqual(transaction.type, "income")
+        self.assertIsNone(self._pending("image-caption-inflow"))
+        self.assertIn("recebimento", response)
+
     def test_caption_conflict_forces_confirmation(self) -> None:
         response = self._process(
             "image-caption-conflict",

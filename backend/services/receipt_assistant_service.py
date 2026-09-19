@@ -101,6 +101,7 @@ async def process_financial_image_message(
     if already_handled:
         return
 
+    logger.info("media_id encontrado")
     await send_text_message(
         whatsapp_phone,
         image_processing_response(response_variant(whatsapp_message_id)),
@@ -111,6 +112,11 @@ async def process_financial_image_message(
             media_id,
             fallback_mime_type=mime_type,
             media_kind="image",
+        )
+        logger.info(
+            "Download da imagem concluído: mime_type=%s image_size_bytes=%s",
+            media.mime_type,
+            len(media.content),
         )
         user_name = await asyncio.to_thread(_get_user_name, whatsapp_phone)
         processing_time = datetime.now(ZoneInfo("America/Sao_Paulo"))
@@ -146,7 +152,7 @@ async def process_financial_image_message(
         )
         response = image_error_response()
     except Exception as exc:
-        logger.error(
+        logger.exception(
             "Falha inesperada ao processar imagem: tipo=%s",
             type(exc).__name__,
         )
@@ -402,21 +408,19 @@ def _pending_direction_amount(
 
 def _direction_from_caption(caption: str | None) -> ReceiptDirection:
     normalized = _normalize_text(caption or "")
-    if normalized in {
-        "paguei",
-        "paguei isso",
-        "eu paguei",
-        "foi gasto",
-        "pix enviado",
-    }:
+    if (
+        normalized in {"paguei", "eu paguei", "foi gasto", "pix enviado"}
+        or normalized.startswith("paguei ")
+        or " eu paguei " in f" {normalized} "
+        or "pix enviado" in normalized
+    ):
         return "outflow"
-    if normalized in {
-        "recebi",
-        "recebi esse pix",
-        "eu recebi",
-        "foi entrada",
-        "pix recebido",
-    }:
+    if (
+        normalized in {"recebi", "eu recebi", "foi entrada", "pix recebido"}
+        or normalized.startswith("recebi ")
+        or " eu recebi " in f" {normalized} "
+        or "pix recebido" in normalized
+    ):
         return "inflow"
     return "unknown"
 

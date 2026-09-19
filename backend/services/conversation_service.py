@@ -416,6 +416,14 @@ def format_audio_confirmation(transcription: str) -> str:
     return f'Eu entendi: "{understood}". Foi isso mesmo?'
 
 
+def pending_audio_rejected_response() -> str:
+    return "Beleza. O que eu entendi errado?"
+
+
+def pending_audio_expired_response() -> str:
+    return "Essa confirmação de áudio expirou. Pode enviar o áudio novamente?"
+
+
 def format_transaction_correction(
     *,
     transaction_type: TransactionType,

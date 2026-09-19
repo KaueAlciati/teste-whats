@@ -44,6 +44,7 @@ def interpret_financial_message(
     text: str,
     current_date: date,
     last_transaction_context: str | None = None,
+    pending_audio_correction: str | None = None,
 ) -> FinancialIntent:
     api_key = os.getenv("GROQ_API_KEY")
     provider = os.getenv("AI_PROVIDER", "groq")
@@ -57,6 +58,17 @@ def interpret_financial_message(
         raise FinancialAIServiceError("Serviço de IA indisponível")
 
     recent_context = last_transaction_context or "Nenhum lançamento recente."
+    pending_audio_context = ""
+    if pending_audio_correction:
+        pending_audio_context = f"""
+
+Esta mensagem veio de um áudio ainda não registrado. O usuário corrigiu o áudio
+antes do registro com: "{pending_audio_correction}".
+Combine a mensagem original com essa correção e retorne UMA nova create_expense
+ou create_income. Não use correct_last_transaction, pois ainda não existe
+lançamento para esse áudio. Altere somente o detalhe corrigido e preserve os
+demais dados claros da mensagem original.
+"""
     instructions = f"""
 Você interpreta mensagens financeiras pessoais escritas em português do Brasil.
 Sua única tarefa é classificar e extrair dados para o schema fornecido.
@@ -106,6 +118,7 @@ deixe os demais como null. O campo type aceita expense ou income. Só altere
 type quando a mensagem for explícita e a confiança for alta. A descrição da
 correção também deve ser curta e limpa, sem repetir a frase completa. Por
 exemplo, para "era diesel, não gasolina", use apenas "Diesel".
+{pending_audio_context}
 
 Períodos permitidos: today, yesterday, current_week, current_month,
 previous_month e all. Para consultas sem período explícito, use all.
