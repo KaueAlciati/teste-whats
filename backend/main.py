@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.auth import router as auth_router
+from backend.api.dashboard import router as dashboard_router
 from backend.api.health import router as health_router
 from backend.api.webhook import router as webhook_router
 
@@ -30,6 +31,7 @@ app.add_middleware(
 app.include_router(webhook_router)
 app.include_router(health_router)
 app.include_router(auth_router)
+app.include_router(dashboard_router)
 
 
 @app.get("/")

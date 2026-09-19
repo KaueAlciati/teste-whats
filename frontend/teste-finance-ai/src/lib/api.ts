@@ -121,6 +121,14 @@ export type ChartDataPoint = {
   expense: number;
 };
 
+export type DashboardData = {
+  balance: number;
+  total_income: number;
+  total_expense: number;
+  monthly_flow: ChartDataPoint[];
+  recent_transactions: Transaction[];
+};
+
 export type UserProfile = {
   id: number;
   name: string;
@@ -437,6 +445,10 @@ export const api = {
   },
 
   // Dashboard
+  getDashboard: async (): Promise<DashboardData> => {
+    return await fetchWithTimeout(`${API_URL}/dashboard`);
+  },
+
   getSummary: async (): Promise<DashboardSummary> => {
     return await fetchWithTimeout(`${API_URL}/dashboard-summary`);
   },

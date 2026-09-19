@@ -8,7 +8,13 @@ import Link from "next/link";
 
 import { TransactionList } from "@/components/TransactionList";
 import { storage } from "@/lib/storage";
-import type { InsightData, DashboardSummary } from "@/lib/api";
+import { api } from "@/lib/api";
+import type {
+  ChartDataPoint,
+  DashboardSummary,
+  InsightData,
+  Transaction,
+} from "@/lib/api";
 import { AppLayout } from "@/components/AppLayout";
 import { useHandleFetchError } from "@/hooks/useHandleFetchError";
 
@@ -53,31 +59,54 @@ export default function Home() {
   });
 
   const [insight, setInsight] = useState<InsightData | null>(null);
+  const [monthlyFlow, setMonthlyFlow] = useState<ChartDataPoint[]>([]);
+  const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([]);
+  const [dashboardLoading, setDashboardLoading] = useState(true);
   const handleFetchError = useHandleFetchError();
 
   const fetchData = useCallback(async () => {
     try {
-      const [summaryData, insightData] = await Promise.all([
-        storage.getSummary(),
-        storage.getInsights(),
-      ]);
-
-      setSummary(summaryData);
-      setInsight(insightData);
+      setDashboardLoading(true);
+      const dashboardData = await api.getDashboard();
+      setSummary({
+        incomes: dashboardData.total_income,
+        expenses: dashboardData.total_expense,
+        total: dashboardData.balance,
+        balance_trend_percentage: 0,
+        income_trend_percentage: 0,
+        expense_trend_percentage: 0,
+        expense_ratio:
+          dashboardData.total_income > 0
+            ? (dashboardData.total_expense / dashboardData.total_income) * 100
+            : 0,
+      });
+      setMonthlyFlow(dashboardData.monthly_flow);
+      setRecentTransactions(dashboardData.recent_transactions);
     } catch (error) {
       await handleFetchError(error, "Erro ao buscar dados do dashboard:");
+    } finally {
+      setDashboardLoading(false);
     }
   }, [handleFetchError]);
 
+  const fetchInsight = useCallback(async () => {
+    try {
+      setInsight(await storage.getInsights());
+    } catch (error) {
+      console.error("Erro ao buscar insight do dashboard:", error);
+    }
+  }, []);
+
   useEffect(() => {
     fetchData();
+    fetchInsight();
 
     // Sem isso, os cards de Saldo/Entradas/Saídas e o Insight da IA
     // ficavam "presos" nos valores de quando a página carregou —
     // só atualizavam depois de um F5 manual.
     window.addEventListener("transactions-changed", fetchData);
     return () => window.removeEventListener("transactions-changed", fetchData);
-  }, [fetchData]);
+  }, [fetchData, fetchInsight]);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat("pt-BR", {
@@ -175,11 +204,14 @@ export default function Home() {
       </section>
 
       <section>
-        <FinanceChart />
+        <FinanceChart data={monthlyFlow} />
       </section>
 
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <TransactionList />
+        <TransactionList
+          transactions={recentTransactions}
+          loading={dashboardLoading}
+        />
 
         {/* Cor própria (roxo "ai", não o verde do dinheiro): sinaliza que
             este bloco é uma leitura da IA sobre os dados, não um número

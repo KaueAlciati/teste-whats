@@ -1,36 +1,19 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useState } from "react";
 import { ArrowUpCircle, ArrowDownCircle, Receipt, Trash2, Pencil } from "lucide-react";
 import { storage } from "@/lib/storage";
 import type { Transaction } from "@/lib/api";
 import { formatCurrency } from "@/lib/utils";
 
-export function TransactionList() {
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [loading, setLoading] = useState(true);
+export function TransactionList({
+  transactions,
+  loading,
+}: {
+  transactions: Transaction[];
+  loading: boolean;
+}) {
   const [deletingId, setDeletingId] = useState<number | null>(null);
-
-  const loadTransactions = useCallback(async () => {
-    try {
-      setLoading(true);
-      const data = await storage.getTransactions();
-      setTransactions(data);
-    } catch (err) {
-      console.error("Erro ao carregar transações:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadTransactions();
-
-    // Escuta o evento disparado ao criar OU excluir uma transação,
-    // em qualquer parte do app, para manter esta lista sincronizada.
-    window.addEventListener("transactions-changed", loadTransactions);
-    return () => window.removeEventListener("transactions-changed", loadTransactions);
-  }, [loadTransactions]);
 
   async function handleDelete(transaction: Transaction) {
     if (!transaction.id) return;

@@ -1,6 +1,5 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
 import {
   AreaChart,
   Area,
@@ -10,35 +9,13 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { storage } from "@/lib/storage";
+import type { ChartDataPoint } from "@/lib/api";
 
-type ChartPoint = {
-  name: string;
-  income: number;
-  expense: number;
-};
-
-export function FinanceChart() {
-  const [data, setData] = useState<(ChartPoint & { total: number })[]>([]);
-
-  const loadData = useCallback(() => {
-    storage
-      .getChartData()
-      .then((raw: ChartPoint[]) => {
-        const withTotal = raw.map((point) => ({
-          ...point,
-          total: point.income - point.expense,
-        }));
-        setData(withTotal);
-      })
-      .catch((err) => console.error("Erro ao carregar dados do gráfico:", err));
-  }, []);
-
-  useEffect(() => {
-    loadData();
-    window.addEventListener("transactions-changed", loadData);
-    return () => window.removeEventListener("transactions-changed", loadData);
-  }, [loadData]);
+export function FinanceChart({ data }: { data: ChartDataPoint[] }) {
+  const chartData = data.map((point) => ({
+    ...point,
+    total: point.income - point.expense,
+  }));
 
   return (
     <div className="min-w-0 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
@@ -46,7 +23,7 @@ export function FinanceChart() {
 
       <div className="h-[300px] min-w-0">
         <ResponsiveContainer width="100%" height={300}>
-          <AreaChart data={data}>
+          <AreaChart data={chartData}>
             <defs>
               <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
