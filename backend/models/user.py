@@ -17,6 +17,22 @@ class User(Base):
         index=True,
     )
     name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    email: Mapped[str | None] = mapped_column(
+        String(320),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
+    password_hash: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+    whatsapp_verified: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
     active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,

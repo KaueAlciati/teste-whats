@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from backend.api.auth import router as auth_router
 from backend.api.health import router as health_router
 from backend.api.webhook import router as webhook_router
 
@@ -11,6 +12,7 @@ app = FastAPI(
 
 app.include_router(webhook_router)
 app.include_router(health_router)
+app.include_router(auth_router)
 
 
 @app.get("/")
