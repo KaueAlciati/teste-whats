@@ -103,6 +103,32 @@ def delete_pending_audio_confirmation(
         raise
 
 
+def append_pending_audio_complement(
+    db: Session,
+    *,
+    pending: PendingAudioConfirmation,
+    user_id: int,
+    complement: str,
+) -> PendingAudioConfirmation:
+    if pending.user_id != user_id:
+        raise PermissionError("Confirmação de áudio pertence a outro usuário")
+
+    normalized_complement = " ".join(complement.split())
+    if not normalized_complement:
+        return pending
+
+    pending.transcription = (
+        f"{pending.transcription}\nComplemento do usuário: {normalized_complement}"
+    )[:4000]
+    try:
+        db.commit()
+        db.refresh(pending)
+        return pending
+    except SQLAlchemyError:
+        db.rollback()
+        raise
+
+
 def pending_audio_is_expired(
     pending: PendingAudioConfirmation,
     *,

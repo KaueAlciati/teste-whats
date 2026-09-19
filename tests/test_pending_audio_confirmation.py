@@ -92,6 +92,77 @@ class PendingAudioConfirmationTestCase(unittest.TestCase):
                 self.assertIn("R$ 10,00", response)
                 self.assertIsNone(self._latest_pending())
 
+    def test_confirmation_uses_explicit_amount_from_original_audio(self) -> None:
+        self._ask_for_confirmation(
+            "audio-explicit-amount",
+            transcription="Comprei 10 de chocolate",
+        )
+        incomplete_intent = self._intent(
+            amount=None,
+            confidence=0.90,
+            needs_clarification=True,
+            clarification_question="Qual foi o valor total gasto com chocolate?",
+        )
+
+        with patch(
+            "backend.services.financial_assistant_service.interpret_financial_message",
+            return_value=incomplete_intent,
+        ):
+            response = self._handle_text("isso", "confirm-explicit-amount")
+
+        transaction = self._transaction("audio-explicit-amount")
+        self.assertIsNotNone(transaction)
+        self.assertEqual(transaction.amount, Decimal("10.00"))
+        self.assertEqual(transaction.description, "Chocolate")
+        self.assertEqual(self._transaction_count(), 1)
+        self.assertNotIn("Qual foi o valor", response)
+        self.assertIsNone(self._latest_pending())
+
+    def test_amount_reply_completes_pending_audio_operation(self) -> None:
+        transcription = "Comprei chocolate"
+        missing_amount_intent = self._intent(
+            amount=None,
+            confidence=0.90,
+            needs_clarification=True,
+            clarification_question="Qual foi o valor?",
+        )
+
+        with patch(
+            "backend.services.financial_assistant_service.interpret_financial_message",
+            return_value=missing_amount_intent,
+        ):
+            first_response = handle_financial_message(
+                self.session,
+                user=self.user,
+                text=transcription,
+                whatsapp_message_id="audio-missing-amount",
+                current_date=self.current_date,
+                source="whatsapp_audio",
+                current_datetime=self.current_time,
+                audio_transcription=transcription,
+            )
+
+        self.assertIn("Qual foi o valor", first_response)
+        self.assertIsNotNone(self._latest_pending())
+
+        with patch(
+            "backend.services.financial_assistant_service.interpret_financial_message",
+            return_value=missing_amount_intent,
+        ) as ai_mock:
+            response = self._handle_text("10 reais", "audio-amount-complement")
+
+        transaction = self._transaction("audio-missing-amount")
+        self.assertIsNotNone(transaction)
+        self.assertEqual(transaction.amount, Decimal("10.00"))
+        self.assertEqual(transaction.description, "Chocolate")
+        self.assertEqual(self._transaction_count(), 1)
+        self.assertIn("R$ 10,00", response)
+        self.assertEqual(
+            ai_mock.call_args.kwargs["pending_audio_correction"],
+            "10 reais",
+        )
+        self.assertIsNone(self._latest_pending())
+
     def test_negative_reply_does_not_register(self) -> None:
         self._ask_for_confirmation("audio-negative")
 
@@ -204,7 +275,13 @@ class PendingAudioConfirmationTestCase(unittest.TestCase):
         self.assertIsNone(duplicate_response)
         self.assertEqual(self._transaction_count(), 1)
 
-    def _ask_for_confirmation(self, message_id: str) -> str | None:
+    def _ask_for_confirmation(
+        self,
+        message_id: str,
+        *,
+        transcription: str | None = None,
+    ) -> str | None:
+        original_transcription = transcription or self.transcription
         with patch(
             "backend.services.financial_assistant_service.interpret_financial_message",
             return_value=self._intent(confidence=0.50),
@@ -212,12 +289,12 @@ class PendingAudioConfirmationTestCase(unittest.TestCase):
             response = handle_financial_message(
                 self.session,
                 user=self.user,
-                text=self.transcription,
+                text=original_transcription,
                 whatsapp_message_id=message_id,
                 current_date=self.current_date,
                 source="whatsapp_audio",
                 current_datetime=self.current_time,
-                audio_transcription=self.transcription,
+                audio_transcription=original_transcription,
             )
         self.assertIn("Foi isso mesmo?", response)
         return response
@@ -280,8 +357,10 @@ class PendingAudioConfirmationTestCase(unittest.TestCase):
     def _intent(
         self,
         *,
-        amount: float = 10,
+        amount: float | None = 10,
         confidence: float,
+        needs_clarification: bool = False,
+        clarification_question: str | None = None,
     ) -> FinancialIntent:
         return FinancialIntent(
             action="create_expense",
@@ -292,8 +371,8 @@ class PendingAudioConfirmationTestCase(unittest.TestCase):
             payment_method=None,
             type=None,
             period=None,
-            needs_clarification=False,
-            clarification_question=None,
+            needs_clarification=needs_clarification,
+            clarification_question=clarification_question,
             confidence=confidence,
         )
 

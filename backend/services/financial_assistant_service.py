@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import unicodedata
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -58,6 +59,7 @@ from backend.services.financial_service import (
     update_transaction,
 )
 from backend.services.pending_audio_confirmation_service import (
+    append_pending_audio_complement,
     create_pending_audio_confirmation,
     delete_pending_audio_confirmation,
     get_latest_pending_audio_for_user,
@@ -263,7 +265,39 @@ def handle_financial_message(
         last_transaction_context=None if confirmed_audio else latest_context,
         pending_audio_correction=pending_audio_correction,
     )
+    if confirmed_audio:
+        intent = _complete_confirmed_audio_intent(
+            intent,
+            transcription=text,
+            complement=pending_audio_correction,
+        )
     variant = response_variant(whatsapp_message_id)
+
+    if (
+        source == "whatsapp_audio"
+        and audio_transcription
+        and intent.action in {"create_expense", "create_income"}
+        and intent.needs_clarification
+        and not confirmed_audio
+    ):
+        create_pending_audio_confirmation(
+            db,
+            user_id=user.id,
+            original_whatsapp_message_id=whatsapp_message_id,
+            transcription=audio_transcription,
+            current_time=processing_time,
+        )
+        question = clarification_response(
+            action=intent.action,
+            question=intent.clarification_question,
+            missing_amount=intent.amount is None,
+            missing_description=not bool((intent.description or "").strip()),
+        )
+        return format_audio_understanding(
+            audio_transcription,
+            question,
+            variant=variant,
+        )
 
     if (
         source == "whatsapp_audio"
@@ -654,10 +688,6 @@ def _handle_pending_audio_reply(
     current_date: date,
     current_time: datetime,
 ) -> tuple[bool, str | None]:
-    reply_type = _classify_pending_audio_reply(text)
-    if reply_type is None:
-        return False, None
-
     pending = get_latest_pending_audio_for_user(db, user_id=user.id)
     if pending is None:
         return False, None
@@ -670,6 +700,12 @@ def _handle_pending_audio_reply(
         )
         return True, pending_audio_expired_response()
 
+    reply_type = _classify_pending_audio_reply(text)
+    if reply_type is None:
+        if not text.strip():
+            return False, None
+        reply_type = "complement"
+
     if reply_type == "negative":
         delete_pending_audio_confirmation(
             db,
@@ -678,7 +714,7 @@ def _handle_pending_audio_reply(
         )
         return True, pending_audio_rejected_response()
 
-    correction = text if reply_type == "correction" else None
+    correction = text if reply_type in {"correction", "complement"} else None
     response = handle_financial_message(
         db,
         user=user,
@@ -692,12 +728,82 @@ def _handle_pending_audio_reply(
         pending_audio_correction=correction,
         skip_pending_context=True,
     )
-    delete_pending_audio_confirmation(
+    transaction = get_transaction_by_whatsapp_message_id(
         db,
-        pending=pending,
-        user_id=user.id,
+        pending.original_whatsapp_message_id,
     )
+    if transaction is not None:
+        delete_pending_audio_confirmation(
+            db,
+            pending=pending,
+            user_id=user.id,
+        )
+    elif correction is not None:
+        append_pending_audio_complement(
+            db,
+            pending=pending,
+            user_id=user.id,
+            complement=correction,
+        )
     return True, response
+
+
+def _complete_confirmed_audio_intent(
+    intent: FinancialIntent,
+    *,
+    transcription: str,
+    complement: str | None,
+) -> FinancialIntent:
+    if intent.action not in {"create_expense", "create_income"}:
+        return intent
+
+    amount = intent.amount
+    if amount is None:
+        amount = _extract_explicit_audio_amount(complement or "")
+        if amount is None:
+            amount = _extract_explicit_audio_amount(transcription)
+
+    description = (intent.description or "").strip()
+    if amount is None or not description:
+        return intent
+
+    return intent.model_copy(
+        update={
+            "amount": amount,
+            "needs_clarification": False,
+            "clarification_question": None,
+        }
+    )
+
+
+def _extract_explicit_audio_amount(text: str) -> float | None:
+    amount_token = r"[0-9][0-9.,]*"
+    patterns = (
+        rf"r\$\s*({amount_token})",
+        rf"({amount_token})\s*(?:reais?|conto)\b",
+        rf"\b(?:comprei|gastei|paguei|recebi|ganhei)\s+({amount_token})\b",
+    )
+    normalized = text.casefold()
+    for pattern in patterns:
+        match = re.search(pattern, normalized)
+        if match is None:
+            continue
+        raw_amount = match.group(1)
+        if "," in raw_amount:
+            raw_amount = raw_amount.replace(".", "").replace(",", ".")
+        elif raw_amount.count(".") == 1:
+            integer_part, decimal_part = raw_amount.split(".")
+            if len(decimal_part) == 3:
+                raw_amount = integer_part + decimal_part
+        elif raw_amount.count(".") > 1:
+            raw_amount = raw_amount.replace(".", "")
+        try:
+            amount = Decimal(raw_amount)
+        except InvalidOperation:
+            continue
+        if amount.is_finite() and amount > 0:
+            return float(amount)
+    return None
 
 
 def _classify_pending_audio_reply(text: str) -> str | None:
