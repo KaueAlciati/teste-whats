@@ -45,6 +45,49 @@ def get_or_create_whatsapp_user(db: Session, whatsapp_phone: str) -> User:
         raise
 
 
+def authorize_registered_whatsapp_user(
+    db: Session,
+    whatsapp_phone: str,
+) -> User | None:
+    normalized_phone = normalize_whatsapp_phone(whatsapp_phone)
+    user = db.scalar(
+        select(User).where(User.whatsapp_phone == normalized_phone)
+    )
+
+    if (
+        user is None
+        or not user.active
+        or not user.email
+        or not user.password_hash
+    ):
+        return None
+
+    if not user.whatsapp_verified:
+        user.whatsapp_verified = True
+        db.commit()
+        db.refresh(user)
+
+    return user
+
+
+def authorize_registered_whatsapp_phone(whatsapp_phone: str) -> bool:
+    if engine is None:
+        logger.error("Banco de dados não configurado para validar usuário")
+        return False
+
+    db = SessionLocal()
+    try:
+        return (
+            authorize_registered_whatsapp_user(db, whatsapp_phone) is not None
+        )
+    except (SQLAlchemyError, ValueError):
+        db.rollback()
+        logger.error("Falha ao validar acesso do usuário do WhatsApp")
+        return False
+    finally:
+        db.close()
+
+
 def register_whatsapp_user(whatsapp_phone: str) -> bool:
     if engine is None:
         logger.error("Banco de dados não configurado para cadastro do usuário")

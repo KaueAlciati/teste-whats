@@ -18,7 +18,17 @@ from backend.services.whatsapp_media_service import (
 class WebhookTestCase(unittest.TestCase):
     def setUp(self) -> None:
         webhook.VERIFY_TOKEN = "local-test-token"
+        self.access_patcher = patch.object(
+            webhook,
+            "authorize_registered_whatsapp_phone",
+            return_value=True,
+        )
+        self.access_patcher.start()
         self.client = TestClient(app)
+
+    def tearDown(self) -> None:
+        self.client.close()
+        self.access_patcher.stop()
 
     def test_get_webhook_remains_compatible(self) -> None:
         response = self.client.get(

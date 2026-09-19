@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 
@@ -11,6 +12,7 @@ from backend.services.financial_assistant_service import (
 from backend.services.receipt_assistant_service import (
     process_financial_image_message,
 )
+from backend.services.user_service import authorize_registered_whatsapp_phone
 
 load_dotenv()
 
@@ -37,6 +39,14 @@ async def receber_mensagem(request: Request, background_tasks: BackgroundTasks):
     dados = await request.json()
 
     for destino, message_id, texto in extrair_mensagens_de_texto(dados):
+        destino = _somente_digitos(destino)
+        if not destino:
+            continue
+        if not await asyncio.to_thread(
+            authorize_registered_whatsapp_phone,
+            destino,
+        ):
+            continue
         logger.info("Mensagem de texto recebida de: %s", destino)
         background_tasks.add_task(
             process_financial_message,
@@ -48,6 +58,14 @@ async def receber_mensagem(request: Request, background_tasks: BackgroundTasks):
     for destino, message_id, media_id, mime_type in extrair_mensagens_de_audio(
         dados
     ):
+        destino = _somente_digitos(destino)
+        if not destino:
+            continue
+        if not await asyncio.to_thread(
+            authorize_registered_whatsapp_phone,
+            destino,
+        ):
+            continue
         logger.info("Mensagem de áudio recebida de: %s", destino)
         background_tasks.add_task(
             process_financial_audio_message,
@@ -64,6 +82,14 @@ async def receber_mensagem(request: Request, background_tasks: BackgroundTasks):
         mime_type,
         caption,
     ) in extrair_mensagens_de_imagem(dados):
+        destino = _somente_digitos(destino)
+        if not destino:
+            continue
+        if not await asyncio.to_thread(
+            authorize_registered_whatsapp_phone,
+            destino,
+        ):
+            continue
         logger.info("Imagem recebida")
         background_tasks.add_task(
             process_financial_image_message,
