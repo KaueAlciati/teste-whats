@@ -14,7 +14,7 @@ logger = logging.getLogger("uvicorn.error")
 
 DEFAULT_VISION_MODEL = "qwen/qwen3.6-27b"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
-GROQ_RESPONSES_ENDPOINT = f"{GROQ_BASE_URL}/responses"
+GROQ_CHAT_COMPLETIONS_ENDPOINT = f"{GROQ_BASE_URL}/chat/completions"
 SUPPORTED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
 
@@ -92,7 +92,7 @@ JSON Schema obrigatório:
         logger.info(
             "Enviando imagem para Groq Vision: endpoint=%s model=%s "
             "mime_type=%s image_size_bytes=%s",
-            GROQ_RESPONSES_ENDPOINT,
+            GROQ_CHAT_COMPLETIONS_ENDPOINT,
             model,
             normalized_mime_type,
             len(image_bytes),
@@ -103,26 +103,28 @@ JSON Schema obrigatório:
             timeout=30.0,
             max_retries=1,
         )
-        response = client.responses.create(
+        completion = client.chat.completions.create(
             model=model,
-            instructions=instructions,
-            input=[
+            messages=[
                 {
                     "role": "user",
                     "content": [
                         {
-                            "type": "input_text",
-                            "text": f"Legenda enviada com a imagem: {safe_caption}",
+                            "type": "text",
+                            "text": (
+                                f"{instructions}\n\n"
+                                f"Legenda enviada com a imagem: {safe_caption}"
+                            ),
                         },
                         {
-                            "type": "input_image",
-                            "image_url": data_url,
-                            "detail": "high",
+                            "type": "image_url",
+                            "image_url": {"url": data_url},
                         },
                     ],
                 }
             ],
-            text={"format": {"type": "json_object"}},
+            response_format={"type": "json_object"},
+            stream=False,
         )
         logger.info("Groq respondeu")
     except APIStatusError as exc:
@@ -144,7 +146,15 @@ JSON Schema obrigatório:
         logger.exception("Erro inesperado da visão Groq: tipo=%s", type(exc).__name__)
         raise ImageUnderstandingError("Falha ao analisar imagem") from exc
 
-    output_text = response.output_text
+    try:
+        output_text = completion.choices[0].message.content
+    except (AttributeError, IndexError, TypeError) as exc:
+        logger.error(
+            "Resposta JSON da visão ausente: tipo=%s",
+            type(exc).__name__,
+        )
+        raise ImageUnderstandingError("Resposta estruturada ausente") from exc
+
     if not isinstance(output_text, str) or not output_text.strip():
         logger.error("Resposta JSON da visão ausente")
         raise ImageUnderstandingError("Resposta estruturada ausente")
