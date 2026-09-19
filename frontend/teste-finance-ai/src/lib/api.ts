@@ -1,5 +1,6 @@
-export const API_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+export const API_URL = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api"
+).replace(/\/+$/, "");
 
 const SESSION_STORAGE_KEY = "financeai_session";
 
@@ -23,7 +24,7 @@ function getStoredSessionToken(): string | null {
 function withAuthHeaders(headers: HeadersInit = {}): HeadersInit {
   const token = getStoredSessionToken();
   return token
-    ? { ...headers, Authorization: `Bearer ${token}` }
+    ? { Authorization: `Bearer ${token}`, ...headers }
     : headers;
 }
 
@@ -124,6 +125,9 @@ export type UserProfile = {
   id: number;
   name: string;
   email: string;
+  whatsapp_phone?: string;
+  whatsapp_verified?: boolean;
+  active?: boolean;
   created_at?: string;
   updated_at?: string;
 };
@@ -141,7 +145,12 @@ export type UserSettings = {
 export type AuthSession = {
   session_token: string;
   user: UserProfile;
-  expires_at: string;
+  expires_at?: string;
+};
+
+export type AuthTokenResponse = {
+  access_token: string;
+  token_type: "bearer";
 };
 
 export type ImportSourceFormat = "csv" | "ofx";
@@ -453,7 +462,7 @@ export const api = {
     });
   },
 
-  login: async (data: { email: string; password: string }): Promise<AuthSession> => {
+  login: async (data: { email: string; password: string }): Promise<AuthTokenResponse> => {
     return await fetchWithTimeout(`${API_URL}/auth/login`, {
       method: "POST",
       headers: {
@@ -463,7 +472,12 @@ export const api = {
     });
   },
 
-  register: async (data: { name: string; email: string; password: string }): Promise<AuthSession> => {
+  register: async (data: {
+    name: string;
+    email: string;
+    whatsapp_phone: string;
+    password: string;
+  }): Promise<UserProfile> => {
     return await fetchWithTimeout(`${API_URL}/auth/register`, {
       method: "POST",
       headers: {
@@ -473,19 +487,10 @@ export const api = {
     });
   },
 
-  logout: async (sessionToken: string) => {
-    void sessionToken; // mantido na assinatura por compatibilidade de chamada
-    return await fetchWithTimeout(`${API_URL}/auth/logout`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
-  },
-
-  getProfile: async (): Promise<UserProfile> => {
-    return await fetchWithTimeout(`${API_URL}/auth/profile`, {
+  getMe: async (accessToken: string): Promise<UserProfile> => {
+    return await fetchWithTimeout(`${API_URL}/auth/me`, {
       method: "GET",
+      headers: { Authorization: `Bearer ${accessToken}` },
     });
   },
 

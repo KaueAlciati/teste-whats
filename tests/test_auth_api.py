@@ -135,6 +135,21 @@ class AuthApiTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.headers["www-authenticate"], "Bearer")
 
+    def test_cors_allows_local_frontend(self) -> None:
+        response = self.client.options(
+            "/api/auth/login",
+            headers={
+                "Origin": "http://localhost:3000",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers["access-control-allow-origin"],
+            "http://localhost:3000",
+        )
+
     def _register(
         self,
         *,

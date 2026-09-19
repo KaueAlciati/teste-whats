@@ -6,13 +6,14 @@ import { useToast } from "@/contexts/ToastContext";
 import { storage } from "@/lib/storage";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Eye, EyeOff, Mail, Lock, User, Check, Loader2 } from "lucide-react";
+import { Eye, EyeOff, Mail, Lock, Phone, User, Check, Loader2 } from "lucide-react";
 
 type SetupStep = "account" | "profile" | "insights" | "done";
 
 export default function RegisterPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [whatsappPhone, setWhatsappPhone] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -42,11 +43,17 @@ export default function RegisterPage() {
       return;
     }
 
+    const normalizedPhone = normalizeBrazilianWhatsApp(whatsappPhone);
+    if (normalizedPhone.length < 12 || normalizedPhone.length > 13) {
+      addToast("error", "Informe um WhatsApp válido com DDD.");
+      return;
+    }
+
     setLoading(true);
     setSetupStep("account");
 
     try {
-      await register(name, email, password);
+      await register(name, email, normalizedPhone, password);
       setSetupStep("profile");
 
       // Não é só decoração: aqui a tela já busca de verdade o resumo e
@@ -129,6 +136,35 @@ export default function RegisterPage() {
                   minLength={2}
                   maxLength={80}
                   autoComplete="name"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label
+                htmlFor="whatsappPhone"
+                className="block text-xs font-semibold text-zinc-300 mb-1.5 tracking-wide"
+              >
+                WhatsApp
+              </label>
+              <div className="relative group">
+                <Phone
+                  className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500 group-focus-within:text-emerald-500 transition-colors shrink-0"
+                  size={17}
+                />
+                <input
+                  id="whatsappPhone"
+                  type="tel"
+                  value={whatsappPhone}
+                  onChange={(e) =>
+                    setWhatsappPhone(formatBrazilianWhatsApp(e.target.value))
+                  }
+                  className="w-full px-4 py-2.5 pl-11 bg-zinc-800/60 border border-zinc-700/70 rounded-xl text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:bg-zinc-800 transition-all duration-200 placeholder:text-zinc-600 text-sm"
+                  placeholder="+55 (15) 99999-9999"
+                  required
+                  maxLength={19}
+                  autoComplete="tel"
+                  inputMode="tel"
                 />
               </div>
             </div>
@@ -268,6 +304,34 @@ export default function RegisterPage() {
       </div>
     </div>
   );
+}
+
+function normalizeBrazilianWhatsApp(value: string): string {
+  const digits = value.replace(/\D/g, "");
+  const hasExplicitCountryCode =
+    digits.startsWith("55") &&
+    (value.trim().startsWith("+55") || digits.length > 11);
+  const nationalNumber =
+    hasExplicitCountryCode ? digits.slice(2) : digits;
+  return `55${nationalNumber.slice(0, 11)}`;
+}
+
+function formatBrazilianWhatsApp(value: string): string {
+  if (!value.replace(/\D/g, "")) return "";
+  const normalized = normalizeBrazilianWhatsApp(value);
+  const nationalNumber = normalized.slice(2);
+  const areaCode = nationalNumber.slice(0, 2);
+  const subscriber = nationalNumber.slice(2);
+  const firstPartLength = subscriber.length > 8 ? 5 : 4;
+  const firstPart = subscriber.slice(0, firstPartLength);
+  const lastPart = subscriber.slice(firstPartLength, firstPartLength + 4);
+
+  let formatted = "+55";
+  if (areaCode) formatted += ` (${areaCode}`;
+  if (areaCode.length === 2) formatted += ")";
+  if (firstPart) formatted += ` ${firstPart}`;
+  if (lastPart) formatted += `-${lastPart}`;
+  return formatted;
 }
 
 const SETUP_STEPS: { key: SetupStep; label: string }[] = [

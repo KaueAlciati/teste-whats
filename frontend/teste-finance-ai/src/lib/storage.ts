@@ -5,7 +5,6 @@ import {
   api,
   API_URL,
   isBackendUnavailableError,
-  type AuthSession,
   type ChartDataPoint,
   type DashboardSummary,
   type Goal,
@@ -203,38 +202,10 @@ export const storage = {
   },
 
   // --- Auth ---
-  login: async (data: { email: string; password: string }): Promise<AuthSession> =>
-    resolveWrite(
-      () => api.login(data),
-      () => localStorageApi.login(data),
-    ),
-
-  register: async (data: {
-    name: string;
-    email: string;
-    password: string;
-  }): Promise<AuthSession> =>
-    resolveWrite(
-      () => api.register(data),
-      () => localStorageApi.register(data),
-    ),
-
-  logout: async (sessionToken: string): Promise<void> =>
-    resolveWrite(
-      () => api.logout(sessionToken),
-      () => localStorageApi.logout(sessionToken),
-    ),
-
   forgotPassword: async (email: string): Promise<void> =>
     resolveWrite(
       () => api.forgotPassword(email),
       () => localStorageApi.forgotPassword(email),
-    ),
-
-  getProfile: async (): Promise<UserProfile> =>
-    fallbackRead(
-      () => api.getProfile(),
-      () => localStorageApi.getProfile(),
     ),
 
   updateProfile: async (data: { name?: string; email?: string }): Promise<UserProfile> =>

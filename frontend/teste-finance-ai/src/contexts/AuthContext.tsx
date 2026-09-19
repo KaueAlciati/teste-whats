@@ -8,7 +8,7 @@ import {
   ReactNode,
   useEffect,
 } from "react";
-import { storage } from "@/lib/storage";
+import { api } from "@/lib/api";
 import type { AuthSession, UserProfile } from "@/lib/api";
 
 interface AuthContextType {
@@ -16,7 +16,12 @@ interface AuthContextType {
   user: UserProfile | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (name: string, email: string, password: string) => Promise<void>;
+  register: (
+    name: string,
+    email: string,
+    whatsappPhone: string,
+    password: string,
+  ) => Promise<void>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -30,25 +35,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Initialize auth from localStorage
   useEffect(() => {
     const initAuth = async () => {
       try {
         const storedSession = localStorage.getItem(STORAGE_KEY);
         if (storedSession) {
           const parsedSession: AuthSession = JSON.parse(storedSession);
-          // Check if session is expired
-          const isExpired = new Date(parsedSession.expires_at) < new Date();
-          if (!isExpired) {
-            setSession(parsedSession);
-            setUser(parsedSession.user);
-          } else {
-            localStorage.removeItem(STORAGE_KEY);
-          }
+          if (!parsedSession.session_token) throw new Error("Sessão inválida");
+          const profile = await api.getMe(parsedSession.session_token);
+          const validatedSession = { ...parsedSession, user: profile };
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(validatedSession));
+          setSession(validatedSession);
+          setUser(profile);
         }
-      } catch (error) {
-        console.error("Error initializing auth:", error);
+      } catch {
         localStorage.removeItem(STORAGE_KEY);
+        setSession(null);
+        setUser(null);
       } finally {
         setLoading(false);
       }
@@ -57,39 +60,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     initAuth();
   }, []);
 
-  // Update fetchWithTimeout to include auth token
   const login = useCallback(async (email: string, password: string) => {
-    const response = await storage.login({ email, password });
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(response));
-    setSession(response);
-    setUser(response.user);
+    const token = await api.login({ email, password });
+    const profile = await api.getMe(token.access_token);
+    const authenticatedSession: AuthSession = {
+      session_token: token.access_token,
+      user: profile,
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(authenticatedSession));
+    setSession(authenticatedSession);
+    setUser(profile);
   }, []);
 
-  const register = useCallback(async (name: string, email: string, password: string) => {
-    const response = await storage.register({ name, email, password });
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(response));
-    setSession(response);
-    setUser(response.user);
-  }, []);
+  const register = useCallback(
+    async (
+      name: string,
+      email: string,
+      whatsappPhone: string,
+      password: string,
+    ) => {
+      await api.register({
+        name,
+        email,
+        whatsapp_phone: whatsappPhone,
+        password,
+      });
+      const token = await api.login({ email, password });
+      const profile = await api.getMe(token.access_token);
+      const authenticatedSession: AuthSession = {
+        session_token: token.access_token,
+        user: profile,
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(authenticatedSession));
+      setSession(authenticatedSession);
+      setUser(profile);
+    },
+    [],
+  );
 
   const logout = useCallback(async () => {
-    if (session) {
-      try {
-        await storage.logout(session.session_token);
-      } catch (error) {
-        console.error("Error during logout:", error);
-      }
-    }
     localStorage.removeItem(STORAGE_KEY);
     setSession(null);
     setUser(null);
-  }, [session]);
+  }, []);
 
   const refreshUser = useCallback(async () => {
     if (session) {
-      const profile = await storage.getProfile();
+      const profile = await api.getMe(session.session_token);
       setUser(profile);
-      // Update session with new user data
       const updatedSession = { ...session, user: profile };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedSession));
       setSession(updatedSession);
