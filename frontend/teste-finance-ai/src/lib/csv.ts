@@ -32,10 +32,16 @@ function formatAmountForSpreadsheet(amount: number): string {
   return amount.toFixed(2).replace(".", ",");
 }
 
+function formatTransactionDate(value: string): string {
+  const [year, month, day] = value.slice(0, 10).split("-");
+  if (!year || !month || !day) return value;
+  return `${day}/${month}/${year}`;
+}
+
 export function buildTransactionsCsv(transactions: Transaction[]): string {
   const header = ["Data", "Descrição", "Categoria", "Tipo", "Valor (R$)"];
   const rows = transactions.map((t) => [
-    new Date(t.date).toLocaleDateString("pt-BR"),
+    formatTransactionDate(t.date),
     t.description,
     t.category,
     t.type === "income" ? "Entrada" : "Saída",

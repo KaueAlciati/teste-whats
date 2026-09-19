@@ -88,10 +88,7 @@ export default function TransactionsPage() {
       )
       .filter((t) => {
         if (sourceFilter === "all") return true;
-        // Transações antigas (criadas antes do campo `source` existir)
-        // ou vindas do modo local não têm essa informação — tratamos
-        // como "manual", que é o comportamento padrão de sempre.
-        const source = t.source ?? "manual";
+        const source = transactionSourceFilter(t.source);
         return source === sourceFilter;
       })
       .filter((t) => categoryFilter === "all" || normalizeCategoryKey(t.category) === categoryFilter)
@@ -307,12 +304,7 @@ export default function TransactionsPage() {
                       <span className="inline-block mt-1 bg-zinc-800 px-2 py-0.5 rounded-md text-xs text-zinc-400">
                         {t.category}
                       </span>
-                      {t.source === "import" && (
-                        <span className="inline-flex items-center gap-1 ml-1.5 mt-1 bg-sky-500/10 text-sky-400 px-2 py-0.5 rounded-md text-xs">
-                          <UploadCloud size={10} />
-                          Importada
-                        </span>
-                      )}
+                      <TransactionSourceBadge source={t.source} mobile />
                     </div>
                   </div>
                   <p
@@ -328,7 +320,7 @@ export default function TransactionsPage() {
 
                 <div className="flex items-center justify-between mt-3 pt-3 border-t border-zinc-800/70">
                   <p className="text-zinc-500 text-xs">
-                    {new Date(t.date).toLocaleDateString("pt-BR")}
+                    {formatTransactionDate(t.date)}
                   </p>
                   <div className="flex items-center gap-1">
                     <button
@@ -381,12 +373,7 @@ export default function TransactionsPage() {
                           <ArrowDownCircle className="text-rose-500 shrink-0" size={18} />
                         )}
                         <span className="font-medium">{t.description}</span>
-                        {t.source === "import" && (
-                          <span className="inline-flex items-center gap-1 bg-sky-500/10 text-sky-400 px-2 py-0.5 rounded-md text-xs shrink-0">
-                            <UploadCloud size={10} />
-                            Importada
-                          </span>
-                        )}
+                        <TransactionSourceBadge source={t.source} />
                       </td>
                       <td
                         className={`font-figures p-4 font-bold whitespace-nowrap ${t.type === "income" ? "text-emerald-500" : "text-zinc-100"}`}
@@ -403,7 +390,7 @@ export default function TransactionsPage() {
                         </span>
                       </td>
                       <td className="p-4 text-right text-zinc-500 text-sm whitespace-nowrap">
-                        {new Date(t.date).toLocaleDateString("pt-BR")}
+                        {formatTransactionDate(t.date)}
                       </td>
                       <td className="p-4 text-right">
                         <div className="flex items-center justify-end gap-3">
@@ -435,4 +422,64 @@ export default function TransactionsPage() {
     </div>
     </AppLayout>
   );
+}
+
+function transactionSourceFilter(
+  source: Transaction["source"],
+): SourceFilter | "whatsapp" {
+  if (source === "import") return "import";
+  if (
+    source === "whatsapp_text" ||
+    source === "whatsapp_audio" ||
+    source === "whatsapp_image" ||
+    source === "whatsapp_document"
+  ) {
+    return "whatsapp";
+  }
+  return "manual";
+}
+
+function TransactionSourceBadge({
+  source,
+  mobile = false,
+}: {
+  source: Transaction["source"];
+  mobile?: boolean;
+}) {
+  const labels: Record<NonNullable<Transaction["source"]>, string> = {
+    manual: "Manual",
+    dashboard_manual: "Manual",
+    web: "Manual",
+    import: "Importada",
+    whatsapp_text: "WhatsApp texto",
+    whatsapp_audio: "WhatsApp áudio",
+    whatsapp_image: "WhatsApp imagem",
+    whatsapp_document: "WhatsApp documento",
+  };
+  const normalizedSource = source ?? "manual";
+  const isImport = normalizedSource === "import";
+  const isWhatsApp = normalizedSource.startsWith("whatsapp_");
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs shrink-0 ${
+        mobile ? "ml-1.5 mt-1" : ""
+      } ${
+        isImport
+          ? "bg-sky-500/10 text-sky-400"
+          : isWhatsApp
+            ? "bg-emerald-500/10 text-emerald-400"
+            : "bg-zinc-800 text-zinc-400"
+      }`}
+    >
+      {isImport && <UploadCloud size={10} />}
+      {labels[normalizedSource]}
+    </span>
+  );
+}
+
+function formatTransactionDate(value: string): string {
+  const [year, month, day] = value.slice(0, 10).split("-");
+  if (!year || !month || !day) return value;
+  return `${day}/${month}/${year}`;
 }

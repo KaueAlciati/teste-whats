@@ -35,10 +35,15 @@ export type Transaction = {
   type: "income" | "expense";
   category: string;
   date: string;
-  /** "import" para transações vindas de importação de extrato (CSV/OFX);
-      "manual" (ou ausente, em respostas antigas/modo local) para as
-      demais. Nunca setado pelo cliente — só o backend atribui. */
-  source?: "manual" | "import";
+  source?:
+    | "manual"
+    | "import"
+    | "dashboard_manual"
+    | "web"
+    | "whatsapp_text"
+    | "whatsapp_audio"
+    | "whatsapp_image"
+    | "whatsapp_document";
 };
 
 export type Goal = {

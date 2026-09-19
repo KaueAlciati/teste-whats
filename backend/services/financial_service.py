@@ -16,6 +16,7 @@ TRANSACTION_SOURCES = {
     "whatsapp_image",
     "whatsapp_document",
     "web",
+    "dashboard_manual",
 }
 
 
@@ -203,6 +204,23 @@ def update_transaction(
         db.commit()
         db.refresh(transaction)
         return transaction
+    except SQLAlchemyError:
+        db.rollback()
+        raise
+
+
+def delete_transaction(
+    db: Session,
+    *,
+    transaction: FinancialTransaction,
+    user_id: int,
+) -> None:
+    if transaction.user_id != user_id:
+        raise PermissionError("Movimentação pertence a outro usuário")
+
+    try:
+        db.delete(transaction)
+        db.commit()
     except SQLAlchemyError:
         db.rollback()
         raise

@@ -1,6 +1,7 @@
 import unicodedata
 
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.models.category import Category
@@ -53,6 +54,49 @@ def find_existing_category(
         if _normalize_category_name(category.name) == requested_name:
             return category
     return None
+
+
+def get_or_create_user_category(
+    db: Session,
+    *,
+    user_id: int,
+    category_name: str,
+    transaction_type: str,
+) -> Category:
+    normalized_name = " ".join(category_name.strip().split())
+    if not normalized_name or len(normalized_name) > 80:
+        raise ValueError("Categoria inválida")
+
+    existing = find_existing_category(
+        db,
+        user_id=user_id,
+        category_name=normalized_name,
+        transaction_type=transaction_type,
+    )
+    if existing is not None:
+        return existing
+
+    category = Category(
+        name=normalized_name,
+        type=transaction_type,
+        user_id=user_id,
+    )
+    db.add(category)
+    try:
+        db.commit()
+        db.refresh(category)
+        return category
+    except IntegrityError:
+        db.rollback()
+        existing = find_existing_category(
+            db,
+            user_id=user_id,
+            category_name=normalized_name,
+            transaction_type=transaction_type,
+        )
+        if existing is not None:
+            return existing
+        raise
 
 
 def _available_categories(
