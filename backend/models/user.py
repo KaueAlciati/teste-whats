@@ -59,7 +59,12 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    goals: Mapped[list["Goal"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 
 from backend.models.category import Category  # noqa: E402
 from backend.models.financial_transaction import FinancialTransaction  # noqa: E402
+from backend.models.goal import Goal  # noqa: E402

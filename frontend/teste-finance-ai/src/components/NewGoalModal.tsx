@@ -1,20 +1,23 @@
 "use client";
 import { useEffect, useState } from "react";
-import { X, Target } from "lucide-react";
+import { Pencil, X, Target } from "lucide-react";
 import { storage } from "@/lib/storage";
+import type { Goal } from "@/lib/api";
 import { useToast } from "@/contexts/ToastContext";
 
 interface NewGoalModalProps {
   onSuccess?: () => void;
+  goal?: Goal;
 }
 
-export function NewGoalModal({ onSuccess }: NewGoalModalProps) {
+export function NewGoalModal({ onSuccess, goal }: NewGoalModalProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [name, setName] = useState("");
   const [target, setTarget] = useState("");
   const [deadline, setDeadline] = useState("");
   const [loading, setLoading] = useState(false);
   const { addToast } = useToast();
+  const isEditing = goal !== undefined;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -25,6 +28,13 @@ export function NewGoalModal({ onSuccess }: NewGoalModalProps) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen]);
 
+  function openModal() {
+    setName(goal?.goal_name ?? "");
+    setTarget(goal ? String(goal.target) : "");
+    setDeadline(goal?.deadline?.slice(0, 10) ?? "");
+    setIsOpen(true);
+  }
+
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
@@ -32,11 +42,14 @@ export function NewGoalModal({ onSuccess }: NewGoalModalProps) {
       const newGoal = {
         name,
         target_amount: parseFloat(target),
-        current_amount: 0,
-        deadline,
+        target_date: deadline || null,
       };
 
-      await storage.createGoal(newGoal);
+      if (goal) {
+        await storage.updateGoal(goal.id, newGoal);
+      } else {
+        await storage.createGoal(newGoal);
+      }
       
       setIsOpen(false);
       setName("");
@@ -45,17 +58,29 @@ export function NewGoalModal({ onSuccess }: NewGoalModalProps) {
       
       if (onSuccess) onSuccess();
     } catch (err) {
-      console.error("Erro ao criar meta:", err);
-      addToast("error", "Não foi possível criar a meta agora. Tente novamente.");
+      console.error("Erro ao salvar meta:", err);
+      addToast("error", "Não foi possível salvar a meta agora. Tente novamente.");
     } finally {
       setLoading(false);
     }
   }
 
+  if (!isOpen && goal)
+    return (
+      <button
+        onClick={openModal}
+        aria-label={`Editar meta ${goal.goal_name}`}
+        className="p-2 hover:bg-emerald-500/10 hover:text-emerald-500 text-zinc-500 rounded-lg transition-colors"
+        title="Editar meta"
+      >
+        <Pencil size={18} />
+      </button>
+    );
+
   if (!isOpen)
     return (
       <button
-        onClick={() => setIsOpen(true)}
+        onClick={openModal}
         className="flex items-center justify-center gap-2 bg-zinc-800 hover:bg-zinc-700 px-4 py-2.5 rounded-xl text-sm font-medium transition-colors w-full sm:w-auto"
       >
         <Target size={18} /> Nova Meta
@@ -72,7 +97,9 @@ export function NewGoalModal({ onSuccess }: NewGoalModalProps) {
         style={{ paddingBottom: "calc(1.5rem + env(safe-area-inset-bottom))" }}
       >
         <div className="flex justify-between items-center mb-6">
-          <h2 id="new-goal-modal-title" className="text-xl font-bold">Definir Nova Meta</h2>
+          <h2 id="new-goal-modal-title" className="text-xl font-bold">
+            {isEditing ? "Editar Meta" : "Definir Nova Meta"}
+          </h2>
           <button
             onClick={() => setIsOpen(false)}
             aria-label="Fechar"
@@ -111,7 +138,11 @@ export function NewGoalModal({ onSuccess }: NewGoalModalProps) {
             disabled={loading}
             className="w-full bg-emerald-600 hover:bg-emerald-500 py-3 rounded-lg font-bold transition-all disabled:opacity-50"
           >
-            {loading ? "Criando..." : "Criar Meta"}
+            {loading
+              ? "Salvando..."
+              : isEditing
+                ? "Salvar Alterações"
+                : "Criar Meta"}
           </button>
         </form>
       </div>

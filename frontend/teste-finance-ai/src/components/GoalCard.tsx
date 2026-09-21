@@ -5,6 +5,7 @@ import { storage } from "@/lib/storage";
 import { formatCurrency } from "@/lib/utils";
 import type { Goal } from "@/lib/api";
 import { AddValueModal } from "./AddValueModal";
+import { NewGoalModal } from "./NewGoalModal";
 import { useToast } from "@/contexts/ToastContext";
 
 interface GoalCardProps {
@@ -73,7 +74,7 @@ export function GoalCard({ goal, onUpdate }: GoalCardProps) {
                 <span className="text-zinc-700">•</span>
                 <span className="flex items-center gap-1">
                   <Calendar size={14} />
-                  {new Date(goal.deadline).toLocaleDateString('pt-BR')}
+                  {formatGoalDate(goal.deadline)}
                 </span>
               </>
             )}
@@ -91,6 +92,7 @@ export function GoalCard({ goal, onUpdate }: GoalCardProps) {
           {/* Sempre visível no toque (abaixo de md); no desktop some até
               passar o mouse no card, igual antes. */}
           <div className="flex gap-1 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+            <NewGoalModal goal={goal} onSuccess={onUpdate} />
             {!isCompleted && (
               <>
                 <button 
@@ -201,4 +203,10 @@ export function GoalCard({ goal, onUpdate }: GoalCardProps) {
       )}
     </div>
   );
+}
+
+function formatGoalDate(value: string): string {
+  const [year, month, day] = value.slice(0, 10).split("-");
+  if (!year || !month || !day) return value;
+  return `${day}/${month}/${year}`;
 }

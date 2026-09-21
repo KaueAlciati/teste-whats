@@ -1,6 +1,7 @@
 import type {
   Transaction,
   Goal,
+  GoalWriteData,
   InsightData,
   InsightEntry,
   DashboardSummary,
@@ -930,25 +931,41 @@ const localStorageBackend = {
     return loadGoals(userId);
   },
 
-  async createGoal(data: Partial<Goal> & { name?: string; target_amount?: number; current_amount?: number }): Promise<Goal> {
+  async createGoal(data: GoalWriteData): Promise<Goal> {
     const userId = requireCurrentUserId();
     const list = loadGoals(userId);
-    const goalName = data.goal_name ?? data.name ?? "Nova Meta";
-    const target = Number(data.target ?? data.target_amount) || 0;
-    const current = Number(data.current ?? data.current_amount) || 0;
 
     const base: Omit<Goal, "missing" | "percent"> = {
       id: nextId(list),
-      goal_name: goalName,
-      target,
-      current,
-      deadline: data.deadline,
-      completed: data.completed ?? false,
+      goal_name: data.name,
+      target: Number(data.target_amount) || 0,
+      current: 0,
+      deadline: data.target_date ?? undefined,
+      completed: false,
     };
     const record = computeGoalDerived(base);
     list.push(record);
     saveGoals(userId, list);
     return record;
+  },
+
+  async updateGoal(id: number, data: Partial<GoalWriteData>): Promise<Goal> {
+    const userId = requireCurrentUserId();
+    const list = loadGoals(userId);
+    const idx = list.findIndex((g) => g.id === id);
+    if (idx === -1) throw new Error("Meta não encontrada");
+    const updated = computeGoalDerived({
+      ...list[idx],
+      goal_name: data.name ?? list[idx].goal_name,
+      target: data.target_amount ?? list[idx].target,
+      deadline:
+        data.target_date === undefined
+          ? list[idx].deadline
+          : data.target_date ?? undefined,
+    });
+    list[idx] = updated;
+    saveGoals(userId, list);
+    return updated;
   },
 
   async depositGoal(id: number, amount: number): Promise<Goal> {

@@ -8,6 +8,7 @@ import {
   type ChartDataPoint,
   type DashboardSummary,
   type Goal,
+  type GoalWriteData,
   type ImportBatchSummary,
   type ImportConfirmResponse,
   type ImportConfirmRow,
@@ -264,10 +265,16 @@ export const storage = {
       () => localStorageApi.getGoalsStatus(),
     ),
 
-  createGoal: async (data: Partial<Goal>) =>
+  createGoal: async (data: GoalWriteData) =>
     resolveWrite(
       () => api.createGoal(data),
       () => localStorageApi.createGoal(data),
+    ),
+
+  updateGoal: async (id: number, data: Partial<GoalWriteData>) =>
+    resolveWrite(
+      () => api.updateGoal(id, data),
+      () => localStorageApi.updateGoal(id, data),
     ),
 
   depositGoal: async (id: number, amount: number) =>

@@ -57,6 +57,12 @@ export type Goal = {
   completed: boolean;
 };
 
+export type GoalWriteData = {
+  name: string;
+  target_amount: number;
+  target_date?: string | null;
+};
+
 export type GoalStatus = "active" | "completed" | "all";
 
 export type InsightEntry = {
@@ -414,10 +420,10 @@ export const api = {
 
   // Goals
   getGoalsStatus: async (): Promise<Goal[]> => {
-    return await fetchWithTimeout(`${API_URL}/goals/status`);
+    return await fetchWithTimeout(`${API_URL}/goals`);
   },
 
-  createGoal: async (data: Partial<Goal>) => {
+  createGoal: async (data: GoalWriteData) => {
     return await fetchWithTimeout(`${API_URL}/goals`, {
       method: "POST",
       headers: {
@@ -427,19 +433,33 @@ export const api = {
     });
   },
 
-  depositGoal: async (id: number, amount: number) => {
-    return await fetchWithTimeout(`${API_URL}/goals/${id}/deposit`, {
-      method: "POST",
+  updateGoal: async (id: number, data: Partial<GoalWriteData>) => {
+    return await fetchWithTimeout(`${API_URL}/goals/${id}`, {
+      method: "PUT",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ amount }),
+      body: JSON.stringify(data),
+    });
+  },
+
+  depositGoal: async (id: number, amount: number) => {
+    return await fetchWithTimeout(`${API_URL}/goals/${id}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ current_amount_delta: amount }),
     });
   },
 
   completeGoal: async (id: number) => {
-    return await fetchWithTimeout(`${API_URL}/goals/${id}/complete`, {
-      method: "POST",
+    return await fetchWithTimeout(`${API_URL}/goals/${id}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ status: "completed" }),
     });
   },
 

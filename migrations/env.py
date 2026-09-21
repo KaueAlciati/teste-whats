@@ -9,6 +9,7 @@ from backend.database.connection import normalize_database_url
 from backend.models import (  # noqa: F401
     Category,
     FinancialTransaction,
+    Goal,
     PendingAudioConfirmation,
     PendingReceipt,
     User,

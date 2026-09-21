@@ -38,6 +38,12 @@ export default function PlanningPage() {
     if (filter === "completed") return matchesSearch && goal.percent >= 100;
     return matchesSearch;
   });
+  const activeGoals = goals.filter(
+    (goal) => !goal.completed && goal.percent < 100,
+  );
+  const closestGoal = activeGoals.length
+    ? [...activeGoals].sort((a, b) => b.percent - a.percent)[0]
+    : null;
 
   return (
     <AppLayout>
@@ -72,16 +78,14 @@ export default function PlanningPage() {
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5">
           <p className="text-zinc-500 text-sm">Metas Ativas</p>
 
-          <h2 className="font-figures text-2xl font-bold mt-2">{goals.filter(g => g.percent < 100).length}</h2>
+          <h2 className="font-figures text-2xl font-bold mt-2">{activeGoals.length}</h2>
         </div>
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5">
           <p className="text-zinc-500 text-sm">Meta Mais Próxima</p>
 
           <h2 className="text-lg font-bold mt-2 text-emerald-400 truncate">
-            {goals.length > 0
-              ? [...goals].sort((a, b) => b.percent - a.percent)[0].goal_name
-              : "Nenhuma"}
+            {closestGoal?.goal_name ?? "Nenhuma"}
           </h2>
         </div>
       </div>
