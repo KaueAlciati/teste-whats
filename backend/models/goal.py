@@ -71,6 +71,11 @@ class Goal(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="goals")
+    contributions: Mapped[list["GoalContribution"]] = relationship(
+        back_populates="goal",
+        cascade="all, delete-orphan",
+    )
 
 
 from backend.models.user import User  # noqa: E402
+from backend.models.goal_contribution import GoalContribution  # noqa: E402

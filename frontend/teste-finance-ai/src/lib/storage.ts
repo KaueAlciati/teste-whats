@@ -260,40 +260,22 @@ export const storage = {
 
   // --- Goals ---
   getGoalsStatus: async (): Promise<Goal[]> =>
-    fallbackRead(
-      () => api.getGoalsStatus(),
-      () => localStorageApi.getGoalsStatus(),
-    ),
+    api.getGoalsStatus(),
 
   createGoal: async (data: GoalWriteData) =>
-    resolveWrite(
-      () => api.createGoal(data),
-      () => localStorageApi.createGoal(data),
-    ),
+    api.createGoal(data),
 
   updateGoal: async (id: number, data: Partial<GoalWriteData>) =>
-    resolveWrite(
-      () => api.updateGoal(id, data),
-      () => localStorageApi.updateGoal(id, data),
-    ),
+    api.updateGoal(id, data),
 
   depositGoal: async (id: number, amount: number) =>
-    resolveWrite(
-      () => api.depositGoal(id, amount),
-      () => localStorageApi.depositGoal(id, amount),
-    ),
+    api.depositGoal(id, amount),
 
   completeGoal: async (id: number) =>
-    resolveWrite(
-      () => api.completeGoal(id),
-      () => localStorageApi.completeGoal(id),
-    ),
+    api.completeGoal(id),
 
   deleteGoal: async (id: number) =>
-    resolveWrite(
-      () => api.deleteGoal(id),
-      () => localStorageApi.deleteGoal(id),
-    ),
+    api.deleteGoal(id),
 
   // --- Dashboard / Insights / Charts ---
   getSummary: async (): Promise<DashboardSummary> =>

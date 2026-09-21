@@ -10,6 +10,8 @@ from backend.models import (  # noqa: F401
     Category,
     FinancialTransaction,
     Goal,
+    GoalContext,
+    GoalContribution,
     PendingAudioConfirmation,
     PendingReceipt,
     User,

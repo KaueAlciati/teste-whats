@@ -58,6 +58,7 @@ from backend.services.financial_service import (
     has_transactions,
     update_transaction,
 )
+from backend.services.goal_whatsapp_service import handle_goal_whatsapp_message
 from backend.services.pending_audio_confirmation_service import (
     append_pending_audio_complement,
     create_pending_audio_confirmation,
@@ -229,6 +230,7 @@ def handle_financial_message(
     processing_time = current_datetime or datetime.now(
         ZoneInfo("America/Sao_Paulo")
     )
+    variant = response_variant(whatsapp_message_id)
     if not skip_pending_context:
         audio_pending_handled, audio_pending_response = _handle_pending_audio_reply(
             db,
@@ -249,6 +251,26 @@ def handle_financial_message(
         )
         if pending_reply.handled:
             return pending_reply.response
+
+    goal_handled, goal_response = handle_goal_whatsapp_message(
+        db,
+        user=user,
+        text=text,
+        source=source,
+        current_time=processing_time,
+    )
+    if goal_handled:
+        if (
+            goal_response
+            and source == "whatsapp_audio"
+            and audio_transcription
+        ):
+            return format_audio_understanding(
+                audio_transcription,
+                goal_response,
+                variant=variant,
+            )
+        return goal_response
 
     latest_transaction = get_latest_transaction_for_user(
         db,
@@ -271,8 +293,6 @@ def handle_financial_message(
             transcription=text,
             complement=pending_audio_correction,
         )
-    variant = response_variant(whatsapp_message_id)
-
     if (
         source == "whatsapp_audio"
         and audio_transcription

@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 from backend.database.base import Base
 from backend.database.connection import get_db
 from backend.main import app
-from backend.models import Goal, User
+from backend.models import Goal, GoalContribution, User
 from backend.services.auth_service import create_access_token
 
 
@@ -127,9 +127,29 @@ class GoalsApiTestCase(unittest.TestCase):
         self.assertEqual(edited.json()["target"], 2000.0)
         self.assertEqual(deposited.json()["current"], 500.0)
         self.assertEqual(deposited.json()["percent"], 25.0)
+        with self.session_factory() as db:
+            contribution = db.scalar(
+                select(GoalContribution).where(
+                    GoalContribution.goal_id == goal_id
+                )
+            )
+            self.assertIsNotNone(contribution)
+            self.assertEqual(contribution.source, "dashboard")
+            self.assertEqual(float(contribution.amount), 500.0)
         self.assertTrue(completed.json()["completed"])
         self.assertEqual(completed.json()["current"], 2000.0)
         self.assertEqual(completed.json()["percent"], 100.0)
+        with self.session_factory() as db:
+            contributions = db.scalars(
+                select(GoalContribution).where(
+                    GoalContribution.goal_id == goal_id
+                )
+            ).all()
+            self.assertEqual(len(contributions), 2)
+            self.assertEqual(
+                sum(float(item.amount) for item in contributions),
+                2000.0,
+            )
 
     def test_user_cannot_update_or_delete_another_users_goal(self) -> None:
         goal_id = self._create(self.other_token, name="Outra meta").json()["id"]
@@ -166,6 +186,30 @@ class GoalsApiTestCase(unittest.TestCase):
         response = self.client.get("/api/goals")
 
         self.assertEqual(response.status_code, 401)
+
+    def test_contribution_endpoints_use_authenticated_user(self) -> None:
+        goal_id = self._create(self.token, name="Reserva").json()["id"]
+
+        created = self.client.post(
+            f"/api/goals/{goal_id}/contributions",
+            json={"amount": 125.5},
+            headers=self._headers(self.token),
+        )
+        listed = self.client.get(
+            f"/api/goals/{goal_id}/contributions",
+            headers=self._headers(self.token),
+        )
+        forbidden = self.client.get(
+            f"/api/goals/{goal_id}/contributions",
+            headers=self._headers(self.other_token),
+        )
+
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.json()["amount"], 125.5)
+        self.assertEqual(created.json()["source"], "dashboard")
+        self.assertEqual(created.json()["current_amount"], 125.5)
+        self.assertEqual(len(listed.json()), 1)
+        self.assertEqual(forbidden.status_code, 404)
 
     def _create(self, token: str, *, name: str):
         return self.client.post(

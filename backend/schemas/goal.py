@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -36,6 +36,10 @@ class GoalUpdate(BaseModel):
     def require_change(self) -> "GoalUpdate":
         if not self.model_fields_set:
             raise ValueError("Informe ao menos um campo para atualizar")
+        if "current_amount_delta" in self.model_fields_set and len(
+            self.model_fields_set
+        ) > 1:
+            raise ValueError("O aporte deve ser enviado separadamente")
         nullable_only = {"target_date"}
         for field_name in self.model_fields_set - nullable_only:
             if getattr(self, field_name) is None:
@@ -52,3 +56,25 @@ class GoalResponse(BaseModel):
     percent: float
     deadline: date | None
     completed: bool
+
+
+class GoalContributionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
+
+
+class GoalContributionResponse(BaseModel):
+    id: int
+    goal_id: int
+    amount: float
+    source: Literal[
+        "dashboard",
+        "whatsapp_text",
+        "whatsapp_audio",
+        "whatsapp_image",
+    ]
+    created_at: datetime
+    current_amount: float
+    missing: float
+    percent: float

@@ -69,18 +69,12 @@ def update_goal(
         goal.target_amount = _money(changes["target_amount"])
     if "target_date" in changes:
         goal.target_date = changes["target_date"]
-    if "current_amount_delta" in changes:
-        goal.current_amount = _money(
-            goal.current_amount + changes["current_amount_delta"]
-        )
-
     requested_status = changes.get("status")
     if requested_status == "completed":
         goal.status = "completed"
-        goal.current_amount = max(goal.current_amount, goal.target_amount)
     elif requested_status == "active":
         goal.status = "active"
-    elif "target_amount" in changes or "current_amount_delta" in changes:
+    elif "target_amount" in changes:
         goal.status = (
             "completed"
             if goal.current_amount >= goal.target_amount
