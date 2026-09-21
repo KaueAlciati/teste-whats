@@ -29,6 +29,16 @@ TRANSACTION_TERMS = {
     "vendi",
 }
 
+GOAL_LIST_COMMANDS = {
+    "minhas metas",
+    "mostre minhas metas",
+    "mostrar metas",
+    "quero ver minhas metas",
+    "quais sao minhas metas",
+    "listar metas",
+    "lista de metas",
+}
+
 
 def handle_goal_whatsapp_message(
     db: Session,
@@ -44,7 +54,7 @@ def handle_goal_whatsapp_message(
     if _is_explicit_financial_transaction(normalized):
         return False, None
 
-    if normalized in {"minhas metas", "listar metas", "lista de metas"}:
+    if normalized in GOAL_LIST_COMMANDS:
         return True, _goals_list_response(db, user_id=user.id)
 
     if _is_create_goal_command(normalized):

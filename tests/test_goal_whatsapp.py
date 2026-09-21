@@ -138,6 +138,100 @@ class GoalWhatsAppTestCase(unittest.TestCase):
         self.assertEqual(contribution.source, "whatsapp_audio")
         self.assertEqual(float(contribution.amount), 50.0)
 
+    def test_mostre_minhas_metas_uses_goal_routing_before_ai(self) -> None:
+        create_goal(
+            self.session,
+            user_id=self.user.id,
+            name="Reserva",
+            target_amount=1000,
+            target_date=None,
+        )
+
+        with patch(
+            "backend.services.financial_assistant_service.interpret_financial_message"
+        ) as interpret_mock:
+            response = self._message(
+                self.user,
+                "mostre minhas metas",
+                "wamid.goal-list-show",
+            )
+
+        self.assertIn("Reserva", response)
+        interpret_mock.assert_not_called()
+
+    def test_minhas_metas_uses_goal_routing_before_ai(self) -> None:
+        create_goal(
+            self.session,
+            user_id=self.user.id,
+            name="Viagem",
+            target_amount=2000,
+            target_date=None,
+        )
+
+        with patch(
+            "backend.services.financial_assistant_service.interpret_financial_message"
+        ) as interpret_mock:
+            response = self._message(
+                self.user,
+                "minhas metas",
+                "wamid.goal-list-short",
+            )
+
+        self.assertIn("Viagem", response)
+        interpret_mock.assert_not_called()
+
+    def test_audio_goal_list_uses_same_routing_after_transcription(self) -> None:
+        create_goal(
+            self.session,
+            user_id=self.user.id,
+            name="Notebook",
+            target_amount=3000,
+            target_date=None,
+        )
+
+        with patch(
+            "backend.services.financial_assistant_service.interpret_financial_message"
+        ) as interpret_mock:
+            response = self._message(
+                self.user,
+                "mostre minhas metas",
+                "wamid.audio-goal-list",
+                source="whatsapp_audio",
+                audio_transcription="mostre minhas metas",
+            )
+
+        self.assertIn('Entendi: "mostre minhas metas"', response)
+        self.assertIn("Notebook", response)
+        interpret_mock.assert_not_called()
+
+    def test_normal_expense_query_stays_in_financial_flow(self) -> None:
+        intent = FinancialIntent(
+            action="query_expenses",
+            amount=None,
+            description=None,
+            category=None,
+            transaction_date=None,
+            payment_method=None,
+            type=None,
+            period="current_month",
+            needs_clarification=False,
+            clarification_question=None,
+            confidence=0.99,
+        )
+
+        with patch(
+            "backend.services.financial_assistant_service.interpret_financial_message",
+            return_value=intent,
+        ) as interpret_mock:
+            response = self._message(
+                self.user,
+                "quanto gastei esse mês?",
+                "wamid.normal-expense-query",
+            )
+
+        interpret_mock.assert_called_once()
+        self.assertIn("gastos", response)
+
     def test_goal_core_accepts_future_whatsapp_image_source(self) -> None:
         self._message(
             self.user,
