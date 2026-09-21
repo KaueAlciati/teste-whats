@@ -10,6 +10,9 @@ from backend.models.goal import Goal
 from backend.models.user import User
 from backend.services.conversation_service import format_brl
 from backend.services.goal_context_service import (
+    begin_goal_selection,
+    clear_pending_goal_selection,
+    get_pending_goal_selection,
     get_selected_goal,
     select_goal_context,
 )
@@ -55,7 +58,11 @@ def handle_goal_whatsapp_message(
         return False, None
 
     if normalized in GOAL_LIST_COMMANDS:
-        return True, _goals_list_response(db, user_id=user.id)
+        return True, _goals_list_response(
+            db,
+            user_id=user.id,
+            current_time=current_time,
+        )
 
     if _is_create_goal_command(normalized):
         return True, _create_goal_response(
@@ -143,6 +150,29 @@ def handle_goal_whatsapp_message(
         return True, (
             f'✅ Meta "{goal.name}" concluída com '
             f"{format_brl(goal.current_amount)}."
+        )
+
+    conversational_selection = _conversational_goal_selection(
+        db,
+        user_id=user.id,
+        text=text,
+        current_time=current_time,
+    )
+    if conversational_selection is not None:
+        goal, selection_was_explicit = conversational_selection
+        if goal is None:
+            if selection_was_explicit:
+                return True, "Não encontrei essa meta. Qual delas você quer ver?"
+            return False, None
+        select_goal_context(
+            db,
+            user_id=user.id,
+            goal=goal,
+            current_time=current_time,
+        )
+        return True, (
+            f'✅ Meta "{goal.name}" selecionada.\n'
+            f"{_goal_progress_response(goal)}"
         )
 
     selection_name = _selection_name(text, normalized)
@@ -264,18 +294,31 @@ def _add_contribution_response(
     )
 
 
-def _goals_list_response(db: Session, *, user_id: int) -> str:
+def _goals_list_response(
+    db: Session,
+    *,
+    user_id: int,
+    current_time: datetime,
+) -> str:
     goals = list_goals(db, user_id=user_id)
     if not goals:
+        clear_pending_goal_selection(db, user_id=user_id)
         return 'Você ainda não tem metas. Envie "criar meta Viagem 3000".'
+    displayed_goals = goals[:10]
+    begin_goal_selection(
+        db,
+        user_id=user_id,
+        goal_ids=[goal.id for goal in displayed_goals],
+        current_time=current_time,
+    )
     lines = ["🎯 Suas metas:"]
-    for goal in goals[:10]:
+    for position, goal in enumerate(displayed_goals, start=1):
         status = "concluída" if goal.status == "completed" else f"{_percent(goal):.0f}%"
         lines.append(
-            f"• {goal.name}: {format_brl(goal.current_amount)} de "
+            f"{position}. {goal.name}: {format_brl(goal.current_amount)} de "
             f"{format_brl(goal.target_amount)} ({status})"
         )
-    lines.append('\nPara selecionar, envie "meta" e o nome. Ex.: "meta Viagem".')
+    lines.append("\nQual delas você quer ver?")
     return "\n".join(lines)
 
 
@@ -347,6 +390,88 @@ def _find_goal_by_name(
         return exact[0]
     partial = [goal for goal in goals if requested in _normalize(goal.name)]
     return partial[0] if len(partial) == 1 else None
+
+
+def _conversational_goal_selection(
+    db: Session,
+    *,
+    user_id: int,
+    text: str,
+    current_time: datetime,
+) -> tuple[Goal | None, bool] | None:
+    goal_ids = get_pending_goal_selection(
+        db,
+        user_id=user_id,
+        current_time=current_time,
+    )
+    if goal_ids is None:
+        return None
+
+    goals_by_id = {
+        goal.id: goal
+        for goal in db.scalars(
+            select(Goal).where(
+                Goal.user_id == user_id,
+                Goal.id.in_(goal_ids),
+            )
+        )
+    }
+    goals = [goals_by_id[goal_id] for goal_id in goal_ids if goal_id in goals_by_id]
+    if not goals:
+        clear_pending_goal_selection(db, user_id=user_id)
+        return None
+
+    normalized = _normalize(text)
+    ordinal_index = _selection_ordinal_index(normalized)
+    if ordinal_index is not None:
+        return (
+            goals[ordinal_index] if ordinal_index < len(goals) else None,
+            True,
+        )
+
+    selection_name, selection_was_explicit = _natural_selection_name(normalized)
+    requested = _normalize(selection_name)
+    exact = [goal for goal in goals if _normalize(goal.name) == requested]
+    if exact:
+        return exact[0], selection_was_explicit
+    partial = [goal for goal in goals if requested in _normalize(goal.name)]
+    if requested and len(partial) == 1:
+        return partial[0], selection_was_explicit
+    return None, selection_was_explicit
+
+
+def _natural_selection_name(normalized: str) -> tuple[str, bool]:
+    for prefix in ("quero a ", "quero o ", "quero ", "a ", "o "):
+        if normalized.startswith(prefix):
+            return normalized[len(prefix) :].strip(), True
+    return normalized, False
+
+
+def _selection_ordinal_index(normalized: str) -> int | None:
+    ordinal_indexes = {
+        "primeira": 0,
+        "primeiro": 0,
+        "segunda": 1,
+        "segundo": 1,
+        "terceira": 2,
+        "terceiro": 2,
+        "quarta": 3,
+        "quarto": 3,
+        "quinta": 4,
+        "quinto": 4,
+        "sexta": 5,
+        "sexto": 5,
+        "setima": 6,
+        "setimo": 6,
+        "oitava": 7,
+        "oitavo": 7,
+        "nona": 8,
+        "nono": 8,
+        "decima": 9,
+        "decimo": 9,
+    }
+    candidate = re.sub(r"^(?:quero\s+)?(?:a|o)\s+", "", normalized)
+    return ordinal_indexes.get(candidate)
 
 
 def _selection_name(text: str, normalized: str) -> str | None:

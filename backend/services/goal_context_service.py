@@ -1,4 +1,6 @@
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+from threading import RLock
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -9,6 +11,56 @@ from backend.models.goal_context import GoalContext
 
 
 GOAL_CONTEXT_TTL = timedelta(minutes=30)
+
+
+@dataclass(frozen=True)
+class PendingGoalSelection:
+    goal_ids: tuple[int, ...]
+    expires_at: datetime
+
+
+_pending_goal_selections: dict[tuple[object, int], PendingGoalSelection] = {}
+_pending_goal_selections_lock = RLock()
+
+
+def begin_goal_selection(
+    db: Session,
+    *,
+    user_id: int,
+    goal_ids: list[int],
+    current_time: datetime,
+) -> None:
+    key = (db.get_bind(), user_id)
+    with _pending_goal_selections_lock:
+        if not goal_ids:
+            _pending_goal_selections.pop(key, None)
+            return
+        _pending_goal_selections[key] = PendingGoalSelection(
+            goal_ids=tuple(goal_ids),
+            expires_at=current_time + GOAL_CONTEXT_TTL,
+        )
+
+
+def get_pending_goal_selection(
+    db: Session,
+    *,
+    user_id: int,
+    current_time: datetime,
+) -> tuple[int, ...] | None:
+    key = (db.get_bind(), user_id)
+    with _pending_goal_selections_lock:
+        pending = _pending_goal_selections.get(key)
+        if pending is None:
+            return None
+        if _is_expired(pending.expires_at, current_time):
+            _pending_goal_selections.pop(key, None)
+            return None
+        return pending.goal_ids
+
+
+def clear_pending_goal_selection(db: Session, *, user_id: int) -> None:
+    with _pending_goal_selections_lock:
+        _pending_goal_selections.pop((db.get_bind(), user_id), None)
 
 
 def select_goal_context(
@@ -38,6 +90,7 @@ def select_goal_context(
     try:
         db.commit()
         db.refresh(context)
+        clear_pending_goal_selection(db, user_id=user_id)
         return context
     except IntegrityError:
         db.rollback()
@@ -50,6 +103,7 @@ def select_goal_context(
         context.expires_at = current_time + GOAL_CONTEXT_TTL
         db.commit()
         db.refresh(context)
+        clear_pending_goal_selection(db, user_id=user_id)
         return context
 
 

@@ -180,6 +180,137 @@ class GoalWhatsAppTestCase(unittest.TestCase):
         self.assertIn("Viagem", response)
         interpret_mock.assert_not_called()
 
+    def test_list_then_bare_name_selects_goal_and_keeps_context(self) -> None:
+        goal = create_goal(
+            self.session,
+            user_id=self.user.id,
+            name="Teste",
+            target_amount=1000,
+            target_date=None,
+        )
+
+        listed = self._message(
+            self.user,
+            "mostre minhas metas",
+            "wamid.conversational-list",
+        )
+        selected = self._message(
+            self.user,
+            "teste",
+            "wamid.conversational-name",
+        )
+        contributed = self._message(
+            self.user,
+            "adiciona 50",
+            "wamid.conversational-add",
+        )
+        missing = self._message(
+            self.user,
+            "quanto falta?",
+            "wamid.conversational-missing",
+        )
+        statement = self._message(
+            self.user,
+            "extrato",
+            "wamid.conversational-statement",
+        )
+
+        self.session.refresh(goal)
+        self.assertIn("Qual delas você quer ver?", listed)
+        self.assertIn('Meta "Teste" selecionada', selected)
+        self.assertIn("R$ 50,00", contributed)
+        self.assertIn("R$ 950,00", missing)
+        self.assertIn("R$ 50,00", statement)
+        self.assertEqual(float(goal.current_amount), 50.0)
+
+    def test_natural_prefixes_select_goal_after_listing(self) -> None:
+        create_goal(
+            self.session,
+            user_id=self.user.id,
+            name="Teste",
+            target_amount=1000,
+            target_date=None,
+        )
+
+        for index, reply in enumerate(("a teste", "quero a teste"), start=1):
+            with self.subTest(reply=reply):
+                self._message(
+                    self.user,
+                    "mostre minhas metas",
+                    f"wamid.prefix-list-{index}",
+                )
+                response = self._message(
+                    self.user,
+                    reply,
+                    f"wamid.prefix-select-{index}",
+                )
+                self.assertIn('Meta "Teste" selecionada', response)
+
+    def test_ordinal_selects_goal_in_displayed_order(self) -> None:
+        create_goal(
+            self.session,
+            user_id=self.user.id,
+            name="Primeira criada",
+            target_amount=1000,
+            target_date=None,
+        )
+        create_goal(
+            self.session,
+            user_id=self.user.id,
+            name="Segunda criada",
+            target_amount=2000,
+            target_date=None,
+        )
+
+        self._message(
+            self.user,
+            "mostre minhas metas",
+            "wamid.ordinal-list-first",
+        )
+        first = self._message(
+            self.user,
+            "a primeira",
+            "wamid.ordinal-first",
+        )
+        self._message(
+            self.user,
+            "mostre minhas metas",
+            "wamid.ordinal-list-second",
+        )
+        second = self._message(
+            self.user,
+            "a segunda",
+            "wamid.ordinal-second",
+        )
+
+        self.assertIn('Meta "Segunda criada" selecionada', first)
+        self.assertIn('Meta "Primeira criada" selecionada', second)
+
+    def test_audio_transcription_uses_conversational_selection(self) -> None:
+        create_goal(
+            self.session,
+            user_id=self.user.id,
+            name="Viagem",
+            target_amount=2500,
+            target_date=None,
+        )
+        self._message(
+            self.user,
+            "mostre minhas metas",
+            "wamid.audio-selection-list",
+        )
+
+        response = self._message(
+            self.user,
+            "quero a viagem",
+            "wamid.audio-selection-reply",
+            source="whatsapp_audio",
+            audio_transcription="quero a viagem",
+        )
+
+        self.assertIn('Entendi: "quero a viagem"', response)
+        self.assertIn('Meta "Viagem" selecionada', response)
+
     def test_audio_goal_list_uses_same_routing_after_transcription(self) -> None:
         create_goal(
             self.session,
