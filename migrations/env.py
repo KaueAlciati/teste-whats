@@ -8,6 +8,7 @@ from backend.database.base import Base
 from backend.database.connection import normalize_database_url
 from backend.models import (  # noqa: F401
     Category,
+    FinancialProfile,
     FinancialTransaction,
     Goal,
     GoalContext,

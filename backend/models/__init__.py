@@ -1,5 +1,6 @@
 from backend.models.category import Category
 from backend.models.financial_transaction import FinancialTransaction
+from backend.models.financial_profile import FinancialProfile
 from backend.models.goal import Goal
 from backend.models.goal_context import GoalContext
 from backend.models.goal_contribution import GoalContribution
@@ -10,6 +11,7 @@ from backend.models.user import User
 __all__ = [
     "Category",
     "FinancialTransaction",
+    "FinancialProfile",
     "Goal",
     "GoalContext",
     "GoalContribution",

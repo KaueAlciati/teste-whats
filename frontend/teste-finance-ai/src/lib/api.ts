@@ -116,6 +116,148 @@ export type InsightData = {
   resumo_mensal?: MonthlySummary | null;
 };
 
+export type FinancialProfileInput = {
+  main_goal:
+    | "emergency_reserve"
+    | "pay_debts"
+    | "purchase_goal"
+    | "organize_finances"
+    | "invest_future"
+    | "grow_wealth";
+  investment_horizon:
+    | "up_to_6_months"
+    | "up_to_1_year"
+    | "one_to_three_years"
+    | "three_to_five_years"
+    | "more_than_five_years";
+  risk_profile: "conservative" | "moderate" | "aggressive";
+  liquidity_need: "high" | "medium" | "low";
+  has_debts: boolean;
+  income_type: "fixed" | "variable" | "mixed";
+  main_priority:
+    | "reduce_expenses"
+    | "organize_budget"
+    | "achieve_goals"
+    | "start_investing"
+    | "increase_savings";
+};
+
+export type FinancialProfile = FinancialProfileInput & {
+  id: number;
+  onboarding_completed: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FinancialProfileState = {
+  onboarding_completed: boolean;
+  profile: FinancialProfile | null;
+};
+
+export type CategoryAmount = {
+  category: string;
+  amount: number;
+  percentage: number;
+};
+
+export type GoalAnalysis = {
+  id: number;
+  name: string;
+  target_amount: number;
+  current_amount: number;
+  remaining_amount: number;
+  progress_percentage: number;
+  target_date: string | null;
+  required_monthly_amount: number | null;
+};
+
+export type InsightsAnalysis = {
+  generated_at: string;
+  profile: FinancialProfile;
+  summary: {
+    balance: number;
+    current_month_income: number;
+    current_month_expenses: number;
+    free_amount: number;
+    committed_income_percentage: number | null;
+    average_monthly_expenses: number | null;
+    average_monthly_income: number | null;
+    transaction_count: number;
+    largest_expense: {
+      description: string;
+      amount: number;
+      category: string;
+      transaction_date: string;
+    } | null;
+    top_expense_category: string | null;
+    category_distribution: CategoryAmount[];
+    previous_month_expenses: number;
+    expense_change_percentage: number | null;
+    category_changes: {
+      category: string;
+      current_amount: number;
+      previous_amount: number;
+      difference: number;
+      percentage_change: number | null;
+      direction: "increased" | "decreased" | "stable";
+    }[];
+    recent_expense_trend: "increasing" | "decreasing" | "stable" | null;
+    monthly_history: { month: string; income: number; expense: number }[];
+    active_goals_count: number;
+    total_saved_in_goals: number;
+    total_remaining_in_goals: number;
+    goals: GoalAnalysis[];
+    average_goal_contribution: number | null;
+    estimated_monthly_savings_capacity: number | null;
+  };
+  health: {
+    level: "good" | "attention" | "critical";
+    score: number;
+    explanation: string;
+  };
+  alerts: {
+    code: string;
+    severity: "positive" | "attention" | "critical" | "info";
+    title: string;
+    message: string;
+  }[];
+  possibilities: {
+    title: string;
+    objective: string;
+    horizon: string;
+    liquidity: string;
+    risk: string;
+    care: string;
+  }[];
+  ai: {
+    available: boolean;
+    cached: boolean;
+    generated_at: string | null;
+    message: string | null;
+    content: {
+      financial_summary: string;
+      positive_points: string[];
+      attention_points: string[];
+      improvements: string[];
+      cut_suggestions: string[];
+      prioritization: string;
+      goals_analysis: string;
+      next_steps: string[];
+    } | null;
+  };
+  market: {
+    available: boolean;
+    message: string;
+    updated_at: string | null;
+    sources: string[];
+  };
+};
+
+export type DashboardInsight = {
+  onboarding_completed: boolean;
+  short_insight: string;
+};
+
 export type DashboardSummary = {
   incomes: number;
   expenses: number;
@@ -481,6 +623,44 @@ export const api = {
   // Insights
   getInsights: async (): Promise<InsightData | null> => {
     return await fetchWithTimeout(`${API_URL}/insights`);
+  },
+
+  getFinancialProfile: async (): Promise<FinancialProfileState> => {
+    return await fetchWithTimeout(`${API_URL}/insights/profile`);
+  },
+
+  createFinancialProfile: async (
+    data: FinancialProfileInput,
+  ): Promise<FinancialProfile> => {
+    return await fetchWithTimeout(`${API_URL}/insights/profile`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+  },
+
+  updateFinancialProfile: async (
+    data: FinancialProfileInput,
+  ): Promise<FinancialProfile> => {
+    return await fetchWithTimeout(`${API_URL}/insights/profile`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+  },
+
+  getInsightsAnalysis: async (): Promise<InsightsAnalysis> => {
+    return await fetchWithTimeout(`${API_URL}/insights`);
+  },
+
+  refreshInsightsAnalysis: async (): Promise<InsightsAnalysis> => {
+    return await fetchWithTimeout(`${API_URL}/insights/refresh`, {
+      method: "POST",
+    });
+  },
+
+  getDashboardInsight: async (): Promise<DashboardInsight> => {
+    return await fetchWithTimeout(`${API_URL}/insights/summary`);
   },
 
   // Charts

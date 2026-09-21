@@ -7,12 +7,11 @@ import { ArrowUpRight, ArrowDownRight, DollarSign, Sparkles } from "lucide-react
 import Link from "next/link";
 
 import { TransactionList } from "@/components/TransactionList";
-import { storage } from "@/lib/storage";
 import { api } from "@/lib/api";
 import type {
   ChartDataPoint,
+  DashboardInsight,
   DashboardSummary,
-  InsightData,
   Transaction,
 } from "@/lib/api";
 import { AppLayout } from "@/components/AppLayout";
@@ -58,7 +57,7 @@ export default function Home() {
     expense_ratio: 0,
   });
 
-  const [insight, setInsight] = useState<InsightData | null>(null);
+  const [insight, setInsight] = useState<DashboardInsight | null>(null);
   const [monthlyFlow, setMonthlyFlow] = useState<ChartDataPoint[]>([]);
   const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([]);
   const [dashboardLoading, setDashboardLoading] = useState(true);
@@ -91,7 +90,7 @@ export default function Home() {
 
   const fetchInsight = useCallback(async () => {
     try {
-      setInsight(await storage.getInsights());
+      setInsight(await api.getDashboardInsight());
     } catch (error) {
       console.error("Erro ao buscar insight do dashboard:", error);
     }
@@ -224,55 +223,18 @@ export default function Home() {
             Insight da IA
           </h3>
 
-          {insight?.ai_enabled === false ? (
-            // Antes, desligar "Insights Semanais da IA" em Configurações
-            // não mudava nada aqui — o card continuava mostrando os
-            // últimos números calculados, dando a entender que a IA
-            // ainda estava ativa. Agora reflete o estado real.
-            <div className="space-y-2 relative">
-              <p className="text-zinc-300 text-sm leading-relaxed">
-                {insight.alerta}
-              </p>
-              <Link
-                href="/settings"
-                className="inline-block text-xs font-medium text-ai-300 hover:text-ai-200 underline underline-offset-2"
-              >
-                Reativar em Configurações
-              </Link>
-            </div>
-          ) : insight ? (
+          {insight ? (
             <div className="space-y-3 relative">
               <p className="text-zinc-300 text-sm leading-relaxed">
-                {insight.alerta}
+                {insight.short_insight}
               </p>
-
-              <div className="grid grid-cols-2 gap-4 mt-2">
-                <div>
-                  <p className="text-xs text-zinc-500 uppercase font-bold">
-                    Previsão
-                  </p>
-
-                  <p className="font-figures text-ai-300 font-bold">
-                    {formatCurrency(insight.previsao_proximo_mes)}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-xs text-zinc-500 uppercase font-bold">
-                    Economia
-                  </p>
-
-                  <p className="font-figures text-ai-300 font-bold">
-                    {formatCurrency(insight.economias_sugeridas)}
-                  </p>
-                </div>
-              </div>
-
               <Link
                 href="/insights"
                 className="inline-block text-xs font-medium text-ai-300 hover:text-ai-200 underline underline-offset-2"
               >
-                Ver todos os insights
+                {insight.onboarding_completed
+                  ? "Ver análise completa"
+                  : "Criar perfil financeiro"}
               </Link>
             </div>
           ) : (

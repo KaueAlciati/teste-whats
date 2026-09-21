@@ -67,9 +67,15 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    financial_profile: Mapped["FinancialProfile | None"] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
 
 from backend.models.category import Category  # noqa: E402
 from backend.models.financial_transaction import FinancialTransaction  # noqa: E402
+from backend.models.financial_profile import FinancialProfile  # noqa: E402
 from backend.models.goal import Goal  # noqa: E402
 from backend.models.goal_contribution import GoalContribution  # noqa: E402
