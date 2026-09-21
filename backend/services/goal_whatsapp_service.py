@@ -2,6 +2,7 @@ import re
 import unicodedata
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
+from difflib import SequenceMatcher
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -32,16 +33,19 @@ TRANSACTION_TERMS = {
     "vendi",
 }
 
-GOAL_LIST_COMMANDS = {
-    "minhas metas",
-    "mostre minhas metas",
-    "mostra minhas metas",
-    "mostrar metas",
-    "quero ver minhas metas",
-    "quais sao minhas metas",
-    "listar metas",
-    "lista de metas",
+GOAL_LIST_VERBS = {
+    "listar",
+    "lista",
+    "mostra",
+    "mostre",
+    "mostrar",
+    "ver",
+    "qual",
+    "quais",
 }
+GOAL_NAME_MATCH_THRESHOLD = 0.72
+GOAL_NAME_AMBIGUITY_MARGIN = 0.12
+GOAL_NAME_POSSIBLE_MATCH_THRESHOLD = 0.45
 
 
 def handle_goal_whatsapp_message(
@@ -58,7 +62,7 @@ def handle_goal_whatsapp_message(
     if _is_explicit_financial_transaction(normalized):
         return False, None
 
-    if normalized in GOAL_LIST_COMMANDS:
+    if _is_goal_list_request(normalized):
         return True, _goals_list_response(
             db,
             user_id=user.id,
@@ -160,8 +164,11 @@ def handle_goal_whatsapp_message(
         current_time=current_time,
     )
     if conversational_selection is not None:
-        goal, selection_was_explicit = conversational_selection
+        goal, alternatives, selection_was_explicit = conversational_selection
         if goal is None:
+            if alternatives:
+                names = " ou ".join(f'"{item.name}"' for item in alternatives)
+                return True, f"Você quis dizer {names}?"
             if selection_was_explicit:
                 return True, "Não encontrei essa meta. Qual delas você quer ver?"
             return False, None
@@ -399,25 +406,37 @@ def _conversational_goal_selection(
     user_id: int,
     text: str,
     current_time: datetime,
-) -> tuple[Goal | None, bool] | None:
+) -> tuple[Goal | None, list[Goal], bool] | None:
     goal_ids = get_pending_goal_selection(
         db,
         user_id=user_id,
         current_time=current_time,
     )
     if goal_ids is None:
-        return None
-
-    goals_by_id = {
-        goal.id: goal
-        for goal in db.scalars(
-            select(Goal).where(
-                Goal.user_id == user_id,
-                Goal.id.in_(goal_ids),
-            )
+        selected_goal = get_selected_goal(
+            db,
+            user_id=user_id,
+            current_time=current_time,
         )
-    }
-    goals = [goals_by_id[goal_id] for goal_id in goal_ids if goal_id in goals_by_id]
+        if selected_goal is None:
+            return None
+        goals = list_goals(db, user_id=user_id)
+    else:
+        goals_by_id = {
+            goal.id: goal
+            for goal in db.scalars(
+                select(Goal).where(
+                    Goal.user_id == user_id,
+                    Goal.id.in_(goal_ids),
+                )
+            )
+        }
+        goals = [
+            goals_by_id[goal_id]
+            for goal_id in goal_ids
+            if goal_id in goals_by_id
+        ]
+
     if not goals:
         clear_pending_goal_selection(db, user_id=user_id)
         return None
@@ -427,25 +446,96 @@ def _conversational_goal_selection(
     if ordinal_index is not None:
         return (
             goals[ordinal_index] if ordinal_index < len(goals) else None,
+            [],
             True,
         )
 
     selection_name, selection_was_explicit = _natural_selection_name(normalized)
-    requested = _normalize(selection_name)
-    exact = [goal for goal in goals if _normalize(goal.name) == requested]
-    if exact:
-        return exact[0], selection_was_explicit
-    partial = [goal for goal in goals if requested in _normalize(goal.name)]
-    if requested and len(partial) == 1:
-        return partial[0], selection_was_explicit
-    return None, selection_was_explicit
+    goal, alternatives, possible_match = _resolve_goal_name(
+        goals,
+        selection_name,
+    )
+    return (
+        goal,
+        alternatives,
+        selection_was_explicit or possible_match,
+    )
 
 
 def _natural_selection_name(normalized: str) -> tuple[str, bool]:
-    for prefix in ("quero a ", "quero o ", "quero ", "a ", "o "):
+    for prefix in (
+        "quero a meta ",
+        "quero o meta ",
+        "quero a ",
+        "quero o ",
+        "quero meta ",
+        "quero ",
+        "a meta ",
+        "o meta ",
+        "meta ",
+        "a ",
+        "o ",
+    ):
         if normalized.startswith(prefix):
             return normalized[len(prefix) :].strip(), True
     return normalized, False
+
+
+def _resolve_goal_name(
+    goals: list[Goal],
+    selection_name: str,
+) -> tuple[Goal | None, list[Goal], bool]:
+    requested = _normalize(selection_name)
+    if not requested:
+        return None, [], True
+
+    exact = [goal for goal in goals if _normalize(goal.name) == requested]
+    if exact:
+        return exact[0], [], True
+
+    partial = [goal for goal in goals if requested in _normalize(goal.name)]
+    if len(partial) == 1:
+        return partial[0], [], True
+    if len(partial) > 1:
+        return None, partial[:2], True
+
+    if len(requested) < 3:
+        return None, [], False
+
+    ranked = sorted(
+        (
+            (
+                SequenceMatcher(None, requested, _normalize(goal.name)).ratio(),
+                goal,
+            )
+            for goal in goals
+        ),
+        key=lambda item: item[0],
+        reverse=True,
+    )
+    best_score, best_goal = ranked[0]
+    second_score = ranked[1][0] if len(ranked) > 1 else 0.0
+    possible_match = best_score >= GOAL_NAME_POSSIBLE_MATCH_THRESHOLD
+    if best_score < GOAL_NAME_MATCH_THRESHOLD:
+        return None, [best_goal] if possible_match else [], possible_match
+    if second_score and best_score - second_score < GOAL_NAME_AMBIGUITY_MARGIN:
+        close_goals = [
+            goal
+            for score, goal in ranked[:2]
+            if best_score - score < GOAL_NAME_AMBIGUITY_MARGIN
+        ]
+        return None, close_goals, True
+    return best_goal, [], True
+
+
+def _is_goal_list_request(normalized: str) -> bool:
+    words = set(normalized.split())
+    has_goal_word = bool(words & {"meta", "metas"})
+    if not has_goal_word:
+        return False
+    if normalized in {"meta", "metas", "minha meta", "minhas metas"}:
+        return True
+    return bool(words & GOAL_LIST_VERBS)
 
 
 def _selection_ordinal_index(normalized: str) -> int | None:

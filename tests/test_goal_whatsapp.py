@@ -180,6 +180,40 @@ class GoalWhatsAppTestCase(unittest.TestCase):
         self.assertIn("Viagem", response)
         interpret_mock.assert_not_called()
 
+    def test_goal_list_accepts_natural_phrase_variations(self) -> None:
+        create_goal(
+            self.session,
+            user_id=self.user.id,
+            name="Reserva",
+            target_amount=1000,
+            target_date=None,
+        )
+        phrases = (
+            "mostra minhas metas",
+            "mostre minhas metas",
+            "mostra-me as metas",
+            "quero ver minhas metas",
+            "ver metas",
+            "quais são minhas metas?",
+            "minhas metas",
+            "meta",
+            "metas",
+        )
+
+        with patch(
+            "backend.services.financial_assistant_service.interpret_financial_message"
+        ) as interpret_mock:
+            for index, phrase in enumerate(phrases, start=1):
+                with self.subTest(phrase=phrase):
+                    response = self._message(
+                        self.user,
+                        phrase,
+                        f"wamid.goal-list-variation-{index}",
+                    )
+                    self.assertIn("Reserva", response)
+
+        interpret_mock.assert_not_called()
+
     def test_list_then_bare_name_selects_goal_and_keeps_context(self) -> None:
         goal = create_goal(
             self.session,
@@ -246,6 +280,90 @@ class GoalWhatsAppTestCase(unittest.TestCase):
                 )
                 self.assertIn('Meta "Teste" selecionada', response)
 
+    def test_fuzzy_name_variations_select_clear_goal_match(self) -> None:
+        create_goal(
+            self.session,
+            user_id=self.user.id,
+            name="Teste",
+            target_amount=1000,
+            target_date=None,
+        )
+        variations = ("testi", "test", "a teste", "quero a testi")
+
+        for index, variation in enumerate(variations, start=1):
+            with self.subTest(variation=variation):
+                self._message(
+                    self.user,
+                    "mostre minhas metas",
+                    f"wamid.fuzzy-list-{index}",
+                )
+                response = self._message(
+                    self.user,
+                    variation,
+                    f"wamid.fuzzy-select-{index}",
+                )
+                self.assertIn('Meta "Teste" selecionada', response)
+
+    def test_fuzzy_name_uses_active_goal_context(self) -> None:
+        create_goal(
+            self.session,
+            user_id=self.user.id,
+            name="Teste",
+            target_amount=1000,
+            target_date=None,
+        )
+        create_goal(
+            self.session,
+            user_id=self.user.id,
+            name="Viagem",
+            target_amount=2000,
+            target_date=None,
+        )
+        self._message(
+            self.user,
+            "meta Viagem",
+            "wamid.active-context-select",
+        )
+
+        response = self._message(
+            self.user,
+            "testi",
+            "wamid.active-context-fuzzy",
+        )
+
+        self.assertIn('Meta "Teste" selecionada', response)
+
+    def test_fuzzy_name_does_not_guess_between_similar_goals(self) -> None:
+        create_goal(
+            self.session,
+            user_id=self.user.id,
+            name="Teste",
+            target_amount=1000,
+            target_date=None,
+        )
+        create_goal(
+            self.session,
+            user_id=self.user.id,
+            name="Testo",
+            target_amount=2000,
+            target_date=None,
+        )
+        self._message(
+            self.user,
+            "mostre minhas metas",
+            "wamid.ambiguous-list",
+        )
+
+        response = self._message(
+            self.user,
+            "testi",
+            "wamid.ambiguous-selection",
+        )
+
+        self.assertIn("Você quis dizer", response)
+        self.assertIn('"Teste"', response)
+        self.assertIn('"Testo"', response)
+
     def test_ordinal_selects_goal_in_displayed_order(self) -> None:
         create_goal(
             self.session,
@@ -310,6 +428,31 @@ class GoalWhatsAppTestCase(unittest.TestCase):
 
         self.assertIn('Entendi: "quero a viagem"', response)
         self.assertIn('Meta "Viagem" selecionada', response)
+
+    def test_audio_transcription_uses_same_fuzzy_goal_resolver(self) -> None:
+        create_goal(
+            self.session,
+            user_id=self.user.id,
+            name="Teste",
+            target_amount=1000,
+            target_date=None,
+        )
+        self._message(
+            self.user,
+            "mostre minhas metas",
+            "wamid.audio-fuzzy-list",
+        )
+
+        response = self._message(
+            self.user,
+            "testi",
+            "wamid.audio-fuzzy-selection",
+            source="whatsapp_audio",
+            audio_transcription="testi",
+        )
+
+        self.assertIn('Entendi: "testi"', response)
+        self.assertIn('Meta "Teste" selecionada', response)
 
     def test_audio_goal_list_uses_same_routing_after_transcription(self) -> None:
         create_goal(
@@ -470,6 +613,18 @@ class GoalWhatsAppTestCase(unittest.TestCase):
         self.assertEqual(count, 0)
 
     def test_explicit_expense_is_not_confused_with_goal(self) -> None:
+        create_goal(
+            self.session,
+            user_id=self.user.id,
+            name="Gasolina",
+            target_amount=500,
+            target_date=None,
+        )
+        self._message(
+            self.user,
+            "mostre minhas metas",
+            "wamid.financial-priority-list",
+        )
         self.session.add(
             Category(
                 name="Outros",
