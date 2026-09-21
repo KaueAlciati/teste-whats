@@ -35,6 +35,7 @@ TRANSACTION_TERMS = {
 GOAL_LIST_COMMANDS = {
     "minhas metas",
     "mostre minhas metas",
+    "mostra minhas metas",
     "mostrar metas",
     "quero ver minhas metas",
     "quais sao minhas metas",

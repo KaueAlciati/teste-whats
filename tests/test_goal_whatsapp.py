@@ -325,15 +325,60 @@ class GoalWhatsAppTestCase(unittest.TestCase):
         ) as interpret_mock:
             response = self._message(
                 self.user,
-                "mostre minhas metas",
+                "Mostra minhas metas.",
                 "wamid.audio-goal-list",
                 source="whatsapp_audio",
-                audio_transcription="mostre minhas metas",
+                audio_transcription="Mostra minhas metas.",
             )
 
-        self.assertIn('Entendi: "mostre minhas metas"', response)
+        self.assertIn('Entendi: "Mostra minhas metas."', response)
         self.assertIn("Notebook", response)
         interpret_mock.assert_not_called()
+
+    def test_audio_expense_continues_in_normal_financial_flow(self) -> None:
+        self.session.add(
+            Category(
+                name="Transporte",
+                type="expense",
+                user_id=None,
+                is_default=True,
+            )
+        )
+        self.session.commit()
+        intent = FinancialIntent(
+            action="create_expense",
+            amount=10,
+            description="gasolina",
+            category="Transporte",
+            transaction_date="2026-09-21",
+            payment_method=None,
+            type="expense",
+            period=None,
+            needs_clarification=False,
+            clarification_question=None,
+            confidence=0.99,
+        )
+
+        with patch(
+            "backend.services.financial_assistant_service.interpret_financial_message",
+            return_value=intent,
+        ):
+            response = self._message(
+                self.user,
+                "gastei 10 de gasolina",
+                "wamid.audio-normal-expense",
+                source="whatsapp_audio",
+                audio_transcription="gastei 10 de gasolina",
+            )
+
+        transaction = self.session.scalar(select(FinancialTransaction))
+        self.assertIn("Gasolina", response)
+        self.assertEqual(float(transaction.amount), 10.0)
+        self.assertEqual(transaction.source, "whatsapp_audio")
+        self.assertEqual(
+            self.session.scalar(select(func.count(GoalContribution.id))),
+            0,
+        )
 
     def test_normal_expense_query_stays_in_financial_flow(self) -> None:
         intent = FinancialIntent(

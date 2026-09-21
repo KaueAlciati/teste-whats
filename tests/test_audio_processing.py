@@ -84,6 +84,32 @@ class AudioProcessingTestCase(unittest.TestCase):
             audio_processing_response(response_variant("wamid.audio")),
         )
 
+    def test_goal_transcription_enters_the_same_message_flow(self) -> None:
+        send_mock = AsyncMock(return_value=True)
+        process_mock = AsyncMock(return_value=None)
+
+        with self._audio_patches(
+            transcription="Mostra minhas metas.",
+            send_mock=send_mock,
+            process_mock=process_mock,
+        ):
+            asyncio.run(
+                process_financial_audio_message(
+                    "5515999999999",
+                    "wamid.audio-goals",
+                    "media-id",
+                    "audio/ogg",
+                )
+            )
+
+        process_mock.assert_awaited_once_with(
+            "5515999999999",
+            "wamid.audio-goals",
+            "Mostra minhas metas.",
+            source="whatsapp_audio",
+            audio_transcription="Mostra minhas metas.",
+        )
+
     def test_empty_transcription_does_not_enter_financial_flow(self) -> None:
         send_mock = AsyncMock(return_value=True)
         process_mock = AsyncMock(return_value=None)
