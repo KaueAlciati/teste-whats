@@ -215,9 +215,11 @@ export const storage = {
       () => localStorageApi.updateProfile(data),
     ),
 
-  deleteAccount: async (): Promise<void> =>
+  deleteAccount: async (confirmation: string): Promise<void> =>
     resolveWrite(
-      () => api.deleteAccount(),
+      async () => {
+        await api.deleteAccount(confirmation);
+      },
       () => localStorageApi.deleteAccount(),
     ),
 

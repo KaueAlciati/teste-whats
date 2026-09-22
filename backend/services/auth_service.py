@@ -38,6 +38,10 @@ class AuthConfigurationError(RuntimeError):
     pass
 
 
+class InvalidCurrentPasswordError(ValueError):
+    pass
+
+
 def normalize_email(email: str) -> str:
     return email.strip().casefold()
 
@@ -114,6 +118,54 @@ def authenticate_user(db: Session, *, email: str, password: str) -> User:
         db.commit()
         db.refresh(user)
     return user
+
+
+def update_user_profile(
+    db: Session,
+    *,
+    user: User,
+    name: str | None,
+    email: str | None,
+) -> User:
+    if email is not None:
+        normalized_email = normalize_email(email)
+        existing_user = db.scalar(
+            select(User).where(
+                User.email == normalized_email,
+                User.id != user.id,
+            )
+        )
+        if existing_user is not None:
+            raise DuplicateEmailError("E-mail já cadastrado")
+        user.email = normalized_email
+
+    if name is not None:
+        user.name = name
+
+    try:
+        db.commit()
+        db.refresh(user)
+        return user
+    except IntegrityError as exc:
+        db.rollback()
+        raise DuplicateEmailError("E-mail já cadastrado") from exc
+
+
+def change_user_password(
+    db: Session,
+    *,
+    user: User,
+    current_password: str,
+    new_password: str,
+) -> None:
+    if user.password_hash is None or not _verify_password(
+        user.password_hash,
+        current_password,
+    ):
+        raise InvalidCurrentPasswordError("Senha atual incorreta")
+
+    user.password_hash = password_hasher.hash(new_password)
+    db.commit()
 
 
 def create_access_token(user: User) -> str:

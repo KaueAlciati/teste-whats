@@ -719,9 +719,33 @@ export const api = {
     });
   },
 
-  deleteAccount: async (): Promise<void> => {
+  changePassword: async (data: {
+    current_password: string;
+    new_password: string;
+    confirm_new_password: string;
+  }): Promise<{ status: string }> => {
+    return await fetchWithTimeout(`${API_URL}/auth/change-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+  },
+
+  clearFinancialHistory: async (
+    confirmation: string,
+  ): Promise<{ status: string }> => {
+    return await fetchWithTimeout(`${API_URL}/auth/financial-history`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmation }),
+    });
+  },
+
+  deleteAccount: async (confirmation: string): Promise<{ status: string }> => {
     return await fetchWithTimeout(`${API_URL}/auth/account`, {
       method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmation }),
     });
   },
 
