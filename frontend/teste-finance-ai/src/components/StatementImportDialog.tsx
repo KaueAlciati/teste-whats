@@ -63,8 +63,8 @@ export function StatementImportDialog({ open, onClose, onImported }: Props) {
   }
 
   async function analyze(selectedFile: File, selectedMapping?: ImportColumnMapping) {
-    if (!selectedFile.name.toLowerCase().endsWith(".csv")) {
-      addToast("error", "Selecione um arquivo CSV.");
+    if (!/\.(csv|pdf|jpe?g|png)$/i.test(selectedFile.name)) {
+      addToast("error", "Selecione um arquivo CSV, PDF, JPG, JPEG ou PNG.");
       return;
     }
     setAnalyzing(true);
@@ -117,7 +117,7 @@ export function StatementImportDialog({ open, onClose, onImported }: Props) {
 
     setConfirming(true);
     try {
-      const response = await api.confirmImport(rows);
+      const response = await api.confirmImport(rows, preview.source);
       setResult({
         imported: response.imported,
         skipped: response.skipped_duplicates ?? response.skipped ?? 0,
@@ -141,7 +141,7 @@ export function StatementImportDialog({ open, onClose, onImported }: Props) {
         <header className="flex items-start justify-between gap-4 border-b border-zinc-800 p-5">
           <div>
             <h2 id="import-title" className="text-xl font-bold">Importar extrato</h2>
-            <p className="mt-1 text-sm text-zinc-400">Analise e revise o CSV antes de salvar qualquer movimentação.</p>
+            <p className="mt-1 text-sm text-zinc-400">Analise e revise o extrato antes de salvar qualquer movimentação.</p>
           </div>
           <button onClick={close} disabled={analyzing || confirming} aria-label="Fechar importação" className="rounded-lg p-2 text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200 disabled:opacity-40">
             <X size={20} />
@@ -159,12 +159,12 @@ export function StatementImportDialog({ open, onClose, onImported }: Props) {
               ) : (
                 <>
                   <UploadCloud className="mx-auto mb-4 text-zinc-500" size={40} />
-                  <p className="font-medium">Selecione o CSV baixado do seu banco</p>
-                  <p className="mb-4 mt-1 text-sm text-zinc-500">Vírgula ou ponto e vírgula · até 5 MB</p>
+                  <p className="font-medium">Selecione o extrato baixado do seu banco</p>
+                  <p className="mb-4 mt-1 text-sm text-zinc-500">CSV, PDF, JPG, JPEG ou PNG · até 10 MB</p>
                   <button onClick={() => fileInputRef.current?.click()} className="rounded-xl bg-emerald-500 px-5 py-2.5 font-semibold text-emerald-950 hover:bg-emerald-400">
-                    Selecionar CSV
+                    Selecionar arquivo
                   </button>
-                  <input ref={fileInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={(event) => {
+                  <input ref={fileInputRef} type="file" accept=".csv,.pdf,.jpg,.jpeg,.png,text/csv,application/pdf,image/jpeg,image/png" className="hidden" onChange={(event) => {
                     const selected = event.target.files?.[0];
                     if (selected) void analyze(selected);
                   }} />

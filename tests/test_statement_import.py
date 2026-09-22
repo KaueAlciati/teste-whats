@@ -1,3 +1,4 @@
+import base64
 import os
 import unittest
 from unittest.mock import patch
@@ -12,6 +13,10 @@ from backend.database.connection import get_db
 from backend.main import app
 from backend.models import FinancialTransaction, User
 from backend.services.auth_service import create_access_token
+from backend.schemas.statement_import import (
+    StatementDocumentExtraction,
+    StatementExtractedMovement,
+)
 
 
 class StatementImportApiTestCase(unittest.TestCase):
@@ -203,6 +208,126 @@ class StatementImportApiTestCase(unittest.TestCase):
         self.assertEqual(preview.status_code, 401)
         self.assertEqual(confirm.status_code, 401)
 
+    def test_image_statement_preview_returns_multiple_rows_without_saving(self) -> None:
+        extraction = self._document_extraction()
+        with patch(
+            "backend.services.statement_import_service.extract_statement_document",
+            return_value=extraction,
+        ):
+            response = self._preview_binary(
+                "extrato.jpg",
+                b"\xff\xd8\xffsafe-image",
+                "image/jpeg",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["source"], "image")
+        self.assertEqual(body["total"], 2)
+        self.assertEqual([row["type"] for row in body["rows"]], ["expense", "income"])
+        with self.session_factory() as db:
+            self.assertEqual(
+                db.scalar(select(func.count(FinancialTransaction.id))),
+                0,
+            )
+
+    def test_pdf_statement_confirmation_uses_pdf_source(self) -> None:
+        extraction = self._document_extraction()
+        with patch(
+            "backend.services.statement_import_service.extract_statement_document",
+            return_value=extraction,
+        ):
+            preview = self._preview_binary(
+                "extrato.pdf",
+                b"%PDF-1.7 safe-pdf",
+                "application/pdf",
+            )
+        row = preview.json()["rows"][0]
+        confirmed = self._confirm(
+            self.token,
+            row,
+            source="pdf",
+        )
+
+        self.assertEqual(confirmed.status_code, 200)
+        with self.session_factory() as db:
+            transaction = db.scalar(select(FinancialTransaction))
+            self.assertEqual(transaction.source, "import_pdf")
+
+        with patch(
+            "backend.services.statement_import_service.extract_statement_document",
+            return_value=extraction,
+        ):
+            duplicate_preview = self._preview_binary(
+                "extrato.pdf",
+                b"%PDF-1.7 safe-pdf",
+                "application/pdf",
+            )
+        self.assertEqual(
+            duplicate_preview.json()["rows"][0]["status"],
+            "possible_duplicate",
+        )
+
+    def test_individual_receipt_is_not_accepted_as_statement(self) -> None:
+        extraction = StatementDocumentExtraction(
+            document_type="single_receipt",
+            movements=[],
+            reason="Comprovante PIX individual",
+        )
+        with patch(
+            "backend.services.statement_import_service.extract_statement_document",
+            return_value=extraction,
+        ):
+            response = self._preview_binary(
+                "comprovante.png",
+                b"\x89PNG\r\n\x1a\nsafe-image",
+                "image/png",
+            )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("comprovante individual", response.json()["detail"])
+
+    def test_unreadable_movement_is_shown_as_invalid_and_not_selected(self) -> None:
+        extraction = StatementDocumentExtraction(
+            document_type="bank_statement",
+            movements=[
+                StatementExtractedMovement(
+                    transaction_date=None,
+                    description=None,
+                    amount=None,
+                    direction="unknown",
+                    confidence=0.2,
+                    reason="Linha ilegível",
+                )
+            ],
+            reason=None,
+        )
+        with patch(
+            "backend.services.statement_import_service.extract_statement_document",
+            return_value=extraction,
+        ):
+            response = self._preview_binary(
+                "extrato.png",
+                b"\x89PNG\r\n\x1a\nsafe-image",
+                "image/png",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        row = response.json()["rows"][0]
+        self.assertEqual(row["status"], "invalid")
+        self.assertIsNone(row["date"])
+        self.assertIsNone(row["amount"])
+        self.assertIsNone(row["type"])
+
+    def test_binary_signature_must_match_extension(self) -> None:
+        response = self._preview_binary(
+            "extrato.pdf",
+            b"not-a-pdf",
+            "application/pdf",
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("não corresponde", response.json()["detail"])
+
     def _preview(
         self,
         content: str,
@@ -225,10 +350,12 @@ class StatementImportApiTestCase(unittest.TestCase):
         row: dict,
         *,
         allow_duplicate: bool = False,
+        source: str = "csv",
     ):
         return self.client.post(
             "/api/transactions/import/confirm",
             json={
+                "source": source,
                 "rows": [
                     {
                         "date": row["date"],
@@ -241,6 +368,47 @@ class StatementImportApiTestCase(unittest.TestCase):
                 ]
             },
             headers=self._headers(token),
+        )
+
+    def _preview_binary(
+        self,
+        filename: str,
+        content: bytes,
+        mime_type: str,
+    ):
+        return self.client.post(
+            "/api/transactions/import/preview",
+            json={
+                "filename": filename,
+                "content_base64": base64.b64encode(content).decode("ascii"),
+                "mime_type": mime_type,
+            },
+            headers=self._headers(self.token),
+        )
+
+    @staticmethod
+    def _document_extraction() -> StatementDocumentExtraction:
+        return StatementDocumentExtraction(
+            document_type="bank_statement",
+            reason=None,
+            movements=[
+                StatementExtractedMovement(
+                    transaction_date="2026-09-20",
+                    description="IFOOD",
+                    amount="40.00",
+                    direction="outflow",
+                    confidence=0.98,
+                    reason=None,
+                ),
+                StatementExtractedMovement(
+                    transaction_date="2026-09-21",
+                    description="PIX recebido",
+                    amount="500.00",
+                    direction="inflow",
+                    confidence=0.97,
+                    reason=None,
+                ),
+            ],
         )
 
     @staticmethod

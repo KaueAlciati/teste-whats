@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowUpCircle, ArrowDownCircle, Search, Trash2, Pencil, Download, UploadCloud, SlidersHorizontal, X } from "lucide-react";
+import { ArrowUpCircle, ArrowDownCircle, Search, Trash2, Pencil, Download, UploadCloud, SlidersHorizontal, X, ChevronDown } from "lucide-react";
 import { storage } from "@/lib/storage";
 import { api, HttpError, type Transaction } from "@/lib/api";
 import { AppLayout } from "@/components/AppLayout";
@@ -26,6 +26,7 @@ export default function TransactionsPage() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [exportingFormat, setExportingFormat] = useState<ExportFormat | null>(null);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const handleFetchError = useHandleFetchError();
   const { addToast } = useToast();
@@ -104,6 +105,7 @@ export default function TransactionsPage() {
       addToast("error", "Informe as duas datas para exportar um intervalo.");
       return;
     }
+    setExportMenuOpen(false);
     setExportingFormat(format);
     try {
       const exported = await api.exportTransactions({
@@ -174,28 +176,26 @@ export default function TransactionsPage() {
             />
           </div>
 
-          <button
-            onClick={() => handleExport("xlsx")}
-            disabled={exportingFormat !== null}
-            aria-label="Exportar extrato em Excel"
-            title="Exportar extrato em Excel"
-            className="shrink-0 flex items-center justify-center gap-2 h-[42px] w-[42px] sm:w-auto sm:px-4 rounded-xl border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/15 active:scale-95 transition-all text-sm font-medium disabled:opacity-50"
-          >
-            <Download size={18} />
-            <span className="hidden sm:inline">
-              {exportingFormat === "xlsx" ? "Exportando..." : "Exportar Excel"}
-            </span>
-          </button>
-
-          <button
-            onClick={() => handleExport("csv")}
-            disabled={exportingFormat !== null}
-            aria-label="Exportar extrato em CSV"
-            title="Exportar extrato em CSV"
-            className="shrink-0 flex items-center justify-center h-[42px] px-3 rounded-xl border border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-emerald-500/40 hover:text-emerald-400 active:scale-95 transition-all text-xs font-medium disabled:opacity-50"
-          >
-            {exportingFormat === "csv" ? "..." : "CSV"}
-          </button>
+          <div className="relative shrink-0">
+            <button
+              onClick={() => setExportMenuOpen((open) => !open)}
+              disabled={exportingFormat !== null}
+              aria-label="Exportar extrato"
+              aria-haspopup="menu"
+              aria-expanded={exportMenuOpen}
+              className="flex h-[42px] items-center justify-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 text-sm font-medium text-emerald-400 transition-all hover:bg-emerald-500/15 active:scale-95 disabled:opacity-50 sm:px-4"
+            >
+              <Download size={18} />
+              <span>{exportingFormat ? "Exportando..." : "Exportar"}</span>
+              <ChevronDown size={15} />
+            </button>
+            {exportMenuOpen && exportingFormat === null && (
+              <div role="menu" className="absolute right-0 top-full z-30 mt-2 w-44 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 p-1 shadow-xl">
+                <button role="menuitem" onClick={() => void handleExport("xlsx")} className="w-full rounded-lg px-3 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-900 hover:text-emerald-400">Excel (.xlsx)</button>
+                <button role="menuitem" onClick={() => void handleExport("csv")} className="w-full rounded-lg px-3 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-900 hover:text-emerald-400">CSV (.csv)</button>
+              </div>
+            )}
+          </div>
 
           <button
             onClick={() => setImportOpen(true)}
@@ -463,7 +463,12 @@ export default function TransactionsPage() {
 function transactionSourceFilter(
   source: Transaction["source"],
 ): SourceFilter | "whatsapp" {
-  if (source === "import" || source === "import_csv") return "import";
+  if (
+    source === "import" ||
+    source === "import_csv" ||
+    source === "import_pdf" ||
+    source === "import_image"
+  ) return "import";
   if (
     source === "whatsapp_text" ||
     source === "whatsapp_audio" ||
@@ -488,13 +493,15 @@ function TransactionSourceBadge({
     web: "Manual",
     import: "Importada",
     import_csv: "Extrato importado",
+    import_pdf: "Extrato importado",
+    import_image: "Extrato importado",
     whatsapp_text: "WhatsApp texto",
     whatsapp_audio: "WhatsApp áudio",
     whatsapp_image: "WhatsApp imagem",
     whatsapp_document: "WhatsApp documento",
   };
   const normalizedSource = source ?? "manual";
-  const isImport = normalizedSource === "import" || normalizedSource === "import_csv";
+  const isImport = normalizedSource.startsWith("import");
   const isWhatsApp = normalizedSource.startsWith("whatsapp_");
 
   return (

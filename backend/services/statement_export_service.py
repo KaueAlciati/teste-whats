@@ -48,6 +48,9 @@ SOURCE_LABELS = {
     "dashboard_manual": "Dashboard manual",
     "web": "Web",
     "import": "Importação",
+    "import_csv": "Extrato importado (CSV)",
+    "import_pdf": "Extrato importado (PDF)",
+    "import_image": "Extrato importado (imagem)",
     "manual": "Manual",
 }
 

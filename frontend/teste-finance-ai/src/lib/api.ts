@@ -39,6 +39,8 @@ export type Transaction = {
     | "manual"
     | "import"
     | "import_csv"
+    | "import_pdf"
+    | "import_image"
     | "dashboard_manual"
     | "web"
     | "whatsapp_text"
@@ -315,7 +317,7 @@ export type AuthTokenResponse = {
   token_type: "bearer";
 };
 
-export type ImportSourceFormat = "csv" | "ofx";
+export type ImportSourceFormat = "csv" | "pdf" | "image";
 export type ImportRowStatus =
   | "ready"
   | "possible_duplicate"
@@ -869,10 +871,12 @@ export const api = {
     file: File,
     mapping?: ImportColumnMapping,
   ): Promise<ImportPreviewResponse> => {
-    if (file.size > 5 * 1024 * 1024) {
-      throw new Error("O arquivo excede o limite de 5 MB.");
+    if (file.size > 10 * 1024 * 1024) {
+      throw new Error("O arquivo excede o limite de 10 MB.");
     }
-    const content = await file.text();
+    const isCsv = file.name.toLowerCase().endsWith(".csv");
+    const content = isCsv ? await file.text() : undefined;
+    const contentBase64 = isCsv ? undefined : await fileToBase64(file);
     // Timeout maior que o padrão porque análise e deduplicação de um
     // extrato grande podem levar mais que as demais chamadas.
     return await fetchWithTimeout(
@@ -880,17 +884,27 @@ export const api = {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filename: file.name, content, mapping }),
+        body: JSON.stringify({
+          filename: file.name,
+          content,
+          content_base64: contentBase64,
+          mime_type: file.type || undefined,
+          mapping: isCsv ? mapping : undefined,
+        }),
       },
-      30000,
+      90000,
     );
   },
 
-  confirmImport: async (rows: ImportConfirmRow[]): Promise<ImportConfirmResponse> => {
+  confirmImport: async (
+    rows: ImportConfirmRow[],
+    source: ImportSourceFormat = "csv",
+  ): Promise<ImportConfirmResponse> => {
     return await fetchWithTimeout(`${API_URL}/transactions/import/confirm`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        source,
         rows: rows.map((row) => ({
           date: row.date,
           amount: row.amount,
@@ -907,3 +921,20 @@ export const api = {
     return await fetchWithTimeout(`${API_URL}/transactions/import/batches`);
   },
 };
+
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Não foi possível ler o arquivo."));
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== "string" || !result.includes(",")) {
+        reject(new Error("Conteúdo do arquivo inválido."));
+        return;
+      }
+      resolve(result.slice(result.indexOf(",") + 1));
+    };
+    reader.readAsDataURL(file);
+  });
+}

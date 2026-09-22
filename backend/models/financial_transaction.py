@@ -27,7 +27,8 @@ class FinancialTransaction(Base):
         CheckConstraint(
             "source IN ("
             "'whatsapp_text', 'whatsapp_audio', 'whatsapp_image', "
-            "'whatsapp_document', 'web', 'dashboard_manual', 'import_csv'"
+            "'whatsapp_document', 'web', 'dashboard_manual', "
+            "'import_csv', 'import_pdf', 'import_image'"
             ")",
             name="ck_financial_transactions_source",
         ),

@@ -29,8 +29,20 @@ class ImportPreviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     filename: str = Field(min_length=1, max_length=255)
-    content: str = Field(min_length=1, max_length=5 * 1024 * 1024)
+    content: str | None = Field(default=None, min_length=1, max_length=10 * 1024 * 1024)
+    content_base64: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=14 * 1024 * 1024,
+    )
+    mime_type: str | None = Field(default=None, max_length=100)
     mapping: ImportColumnMapping | None = None
+
+    @model_validator(mode="after")
+    def require_exactly_one_content(self) -> "ImportPreviewRequest":
+        if (self.content is None) == (self.content_base64 is None):
+            raise ValueError("Envie o conteúdo textual ou binário do arquivo")
+        return self
 
 
 class ImportPreviewRow(BaseModel):
@@ -48,8 +60,8 @@ class ImportPreviewRow(BaseModel):
 
 class ImportPreviewResponse(BaseModel):
     filename: str
-    source: Literal["csv"] = "csv"
-    delimiter: Literal[",", ";"]
+    source: Literal["csv", "pdf", "image"]
+    delimiter: Literal[",", ";"] | None = None
     columns: list[str]
     mapping_required: bool
     mapping: ImportColumnMapping | None
@@ -76,9 +88,29 @@ class ImportConfirmRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     rows: list[ImportConfirmRow] = Field(min_length=1, max_length=5000)
+    source: Literal["csv", "pdf", "image"] = "csv"
 
 
 class ImportConfirmResponse(BaseModel):
     status: Literal["success"] = "success"
     imported: int
     skipped_duplicates: int
+
+
+class StatementExtractedMovement(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    transaction_date: str | None = None
+    description: str | None = None
+    amount: str | None = None
+    direction: Literal["inflow", "outflow", "unknown"]
+    confidence: float = Field(ge=0, le=1)
+    reason: str | None = None
+
+
+class StatementDocumentExtraction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    document_type: Literal["bank_statement", "single_receipt", "unknown"]
+    movements: list[StatementExtractedMovement] = Field(max_length=5000)
+    reason: str | None = None

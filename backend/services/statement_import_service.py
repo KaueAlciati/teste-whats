@@ -1,3 +1,5 @@
+import base64
+import binascii
 import csv
 import io
 import re
@@ -15,12 +17,24 @@ from backend.schemas.statement_import import (
     ImportConfirmRow,
     ImportPreviewResponse,
     ImportPreviewRow,
+    StatementDocumentExtraction,
+    StatementExtractedMovement,
 )
 from backend.services.category_service import get_or_create_user_category
 from backend.services.financial_service import create_transaction
+from backend.services.statement_document_service import (
+    StatementDocumentError,
+    extract_statement_document,
+)
 
 
 MAX_CSV_ROWS = 5000
+MAX_IMPORT_FILE_SIZE = 10 * 1024 * 1024
+IMPORT_SOURCE_BY_FORMAT = {
+    "csv": "import_csv",
+    "pdf": "import_pdf",
+    "image": "import_image",
+}
 
 
 class StatementImportError(ValueError):
@@ -84,6 +98,75 @@ class ParsedCsv:
     rows: list[dict[str, str]]
 
 
+def preview_statement_import(
+    db: Session,
+    *,
+    user_id: int,
+    filename: str,
+    content: str | None,
+    content_base64: str | None,
+    mime_type: str | None,
+    mapping: ImportColumnMapping | None,
+) -> ImportPreviewResponse:
+    extension = _file_extension(filename)
+    if extension == ".csv":
+        if content is None or content_base64 is not None:
+            raise StatementImportError("Conteúdo CSV inválido")
+        return preview_csv_import(
+            db,
+            user_id=user_id,
+            filename=filename,
+            content=content,
+            mapping=mapping,
+        )
+
+    if extension not in {".pdf", ".jpg", ".jpeg", ".png"}:
+        raise StatementImportError(
+            "Formato não suportado. Use CSV, PDF, JPG, JPEG ou PNG"
+        )
+    if mapping is not None:
+        raise StatementImportError("Mapeamento manual é exclusivo para CSV")
+    if content_base64 is None or content is not None:
+        raise StatementImportError("Conteúdo binário inválido")
+
+    file_bytes = _decode_binary_content(content_base64)
+    detected_mime_type = _validate_binary_file(
+        file_bytes,
+        extension=extension,
+        declared_mime_type=mime_type,
+    )
+    try:
+        extraction = extract_statement_document(
+            file_bytes,
+            mime_type=detected_mime_type,
+            filename=filename,
+        )
+    except StatementDocumentError as exc:
+        raise StatementImportError(str(exc)) from exc
+
+    if extraction.document_type == "single_receipt":
+        raise StatementImportError(
+            "O arquivo parece ser um comprovante individual, não um extrato bancário"
+        )
+    if extraction.document_type != "bank_statement":
+        raise StatementImportError(
+            extraction.reason or "Não foi possível reconhecer um extrato bancário"
+        )
+    if not extraction.movements:
+        raise StatementImportError(
+            "Nenhuma movimentação legível foi encontrada no extrato"
+        )
+
+    source = "pdf" if extension == ".pdf" else "image"
+    rows = _normalize_extracted_movements(extraction)
+    _mark_duplicate_rows(db, user_id=user_id, rows=rows)
+    return _build_preview_response(
+        filename=filename,
+        source=source,
+        rows=rows,
+    )
+
+
 def preview_csv_import(
     db: Session,
     *,
@@ -106,6 +189,7 @@ def preview_csv_import(
     if mapping_required:
         return ImportPreviewResponse(
             filename=filename,
+            source="csv",
             delimiter=parsed.delimiter,
             columns=parsed.columns,
             mapping_required=True,
@@ -120,32 +204,17 @@ def preview_csv_import(
 
     assert resolved_mapping is not None
     _validate_mapping(resolved_mapping, parsed.columns)
-    existing_fingerprints = _existing_fingerprints(db, user_id=user_id)
-    seen_fingerprints: set[tuple[date, Decimal, str, str]] = set()
     preview_rows: list[ImportPreviewRow] = []
 
     for index, raw_row in enumerate(parsed.rows, start=2):
         preview_row = _normalize_row(index, raw_row, resolved_mapping)
-        if preview_row.status != "invalid":
-            assert preview_row.date is not None
-            assert preview_row.amount is not None
-            assert preview_row.type is not None
-            fingerprint = transaction_fingerprint(
-                transaction_date=preview_row.date,
-                amount=Decimal(str(preview_row.amount)),
-                description=preview_row.description,
-                transaction_type=preview_row.type,
-            )
-            if (
-                fingerprint in existing_fingerprints
-                or fingerprint in seen_fingerprints
-            ):
-                preview_row.status = "possible_duplicate"
-            seen_fingerprints.add(fingerprint)
         preview_rows.append(preview_row)
+
+    _mark_duplicate_rows(db, user_id=user_id, rows=preview_rows)
 
     return ImportPreviewResponse(
         filename=filename,
+        source="csv",
         delimiter=parsed.delimiter,
         columns=parsed.columns,
         mapping_required=False,
@@ -161,12 +230,16 @@ def preview_csv_import(
     )
 
 
-def confirm_csv_import(
+def confirm_statement_import(
     db: Session,
     *,
     user_id: int,
     rows: list[ImportConfirmRow],
+    source_format: str,
 ) -> tuple[int, int]:
+    transaction_source = IMPORT_SOURCE_BY_FORMAT.get(source_format)
+    if transaction_source is None:
+        raise StatementImportError("Origem de importação inválida")
     existing_fingerprints = _existing_fingerprints(db, user_id=user_id)
     imported_fingerprints: set[tuple[date, Decimal, str, str]] = set()
     imported = 0
@@ -201,12 +274,198 @@ def confirm_csv_import(
             description=row.description,
             category_id=category.id,
             transaction_date=row.date,
-            source="import_csv",
+            source=transaction_source,
         )
         imported_fingerprints.add(fingerprint)
         imported += 1
 
     return imported, skipped_duplicates
+
+
+def confirm_csv_import(
+    db: Session,
+    *,
+    user_id: int,
+    rows: list[ImportConfirmRow],
+) -> tuple[int, int]:
+    return confirm_statement_import(
+        db,
+        user_id=user_id,
+        rows=rows,
+        source_format="csv",
+    )
+
+
+def _normalize_extracted_movements(
+    extraction: StatementDocumentExtraction,
+) -> list[ImportPreviewRow]:
+    return [
+        _normalize_extracted_movement(index, movement)
+        for index, movement in enumerate(extraction.movements, start=1)
+    ]
+
+
+def _normalize_extracted_movement(
+    row_id: int,
+    movement: StatementExtractedMovement,
+) -> ImportPreviewRow:
+    errors: list[str] = []
+    description = " ".join((movement.description or "").split())
+    transaction_date: date | None = None
+    amount: Decimal | None = None
+    transaction_type: str | None = None
+
+    if not description:
+        errors.append("Descrição ilegível")
+        description = "(movimentação sem descrição legível)"
+    elif len(description) > 255:
+        description = description[:255].rstrip()
+
+    if movement.transaction_date:
+        try:
+            transaction_date = _parse_date(movement.transaction_date)
+        except StatementImportError:
+            errors.append("Data ilegível")
+    else:
+        errors.append("Data ausente")
+
+    if movement.amount:
+        try:
+            amount = abs(_parse_amount(movement.amount)).quantize(
+                Decimal("0.01")
+            )
+            if amount <= 0:
+                errors.append("Valor inválido")
+                amount = None
+        except StatementImportError:
+            errors.append("Valor ilegível")
+    else:
+        errors.append("Valor ausente")
+
+    if movement.direction == "inflow":
+        transaction_type = "income"
+    elif movement.direction == "outflow":
+        transaction_type = "expense"
+    else:
+        errors.append("Entrada/saída não identificada")
+
+    if movement.confidence < 0.65:
+        errors.append("Leitura com baixa confiança")
+    if movement.reason and errors:
+        errors.append(movement.reason[:160])
+
+    category = None
+    category_source = "none"
+    if description and not description.startswith("("):
+        category, category_source = _suggest_category(description)
+
+    return ImportPreviewRow(
+        id=row_id,
+        line_number=row_id,
+        date=transaction_date,
+        description=description,
+        amount=float(amount) if amount is not None else None,
+        type=transaction_type,
+        category=category,
+        category_source=category_source,
+        status="invalid" if errors else "ready",
+        error_reason="; ".join(dict.fromkeys(errors)) or None,
+    )
+
+
+def _mark_duplicate_rows(
+    db: Session,
+    *,
+    user_id: int,
+    rows: list[ImportPreviewRow],
+) -> None:
+    existing_fingerprints = _existing_fingerprints(db, user_id=user_id)
+    seen_fingerprints: set[tuple[date, Decimal, str, str]] = set()
+    for row in rows:
+        if row.status == "invalid":
+            continue
+        assert row.date is not None
+        assert row.amount is not None
+        assert row.type is not None
+        fingerprint = transaction_fingerprint(
+            transaction_date=row.date,
+            amount=Decimal(str(row.amount)),
+            description=row.description,
+            transaction_type=row.type,
+        )
+        if fingerprint in existing_fingerprints or fingerprint in seen_fingerprints:
+            row.status = "possible_duplicate"
+        seen_fingerprints.add(fingerprint)
+
+
+def _build_preview_response(
+    *,
+    filename: str,
+    source: str,
+    rows: list[ImportPreviewRow],
+) -> ImportPreviewResponse:
+    return ImportPreviewResponse(
+        filename=filename,
+        source=source,
+        delimiter=None,
+        columns=[],
+        mapping_required=False,
+        mapping=None,
+        sample_rows=[],
+        total=len(rows),
+        ready=sum(row.status == "ready" for row in rows),
+        possible_duplicates=sum(
+            row.status == "possible_duplicate" for row in rows
+        ),
+        invalid=sum(row.status == "invalid" for row in rows),
+        rows=rows,
+    )
+
+
+def _file_extension(filename: str) -> str:
+    normalized = filename.casefold().strip()
+    if "." not in normalized:
+        return ""
+    return "." + normalized.rsplit(".", 1)[1]
+
+
+def _decode_binary_content(content_base64: str) -> bytes:
+    try:
+        file_bytes = base64.b64decode(content_base64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise StatementImportError("Conteúdo binário inválido") from exc
+    if not file_bytes:
+        raise StatementImportError("Arquivo vazio")
+    if len(file_bytes) > MAX_IMPORT_FILE_SIZE:
+        raise StatementImportError("O arquivo excede o limite de 10 MB")
+    return file_bytes
+
+
+def _validate_binary_file(
+    file_bytes: bytes,
+    *,
+    extension: str,
+    declared_mime_type: str | None,
+) -> str:
+    if extension == ".pdf":
+        expected_mime_type = "application/pdf"
+        valid_signature = file_bytes.startswith(b"%PDF-")
+    elif extension in {".jpg", ".jpeg"}:
+        expected_mime_type = "image/jpeg"
+        valid_signature = file_bytes.startswith(b"\xff\xd8\xff")
+    else:
+        expected_mime_type = "image/png"
+        valid_signature = file_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+
+    if not valid_signature:
+        raise StatementImportError("O conteúdo do arquivo não corresponde ao formato")
+    normalized_declared = (declared_mime_type or "").casefold().strip()
+    if normalized_declared and normalized_declared not in {
+        expected_mime_type,
+        "application/octet-stream",
+    }:
+        raise StatementImportError("Tipo do arquivo não corresponde à extensão")
+    return expected_mime_type
 
 
 def transaction_fingerprint(

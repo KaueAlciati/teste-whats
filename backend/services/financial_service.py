@@ -18,6 +18,8 @@ TRANSACTION_SOURCES = {
     "web",
     "dashboard_manual",
     "import_csv",
+    "import_pdf",
+    "import_image",
 }
 
 

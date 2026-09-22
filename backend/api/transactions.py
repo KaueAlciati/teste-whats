@@ -31,8 +31,8 @@ from backend.services.statement_export_service import (
 )
 from backend.services.statement_import_service import (
     StatementImportError,
-    confirm_csv_import,
-    preview_csv_import,
+    confirm_statement_import,
+    preview_statement_import,
 )
 
 
@@ -111,11 +111,13 @@ def preview_import(
     db: Session = Depends(get_db),
 ) -> ImportPreviewResponse:
     try:
-        return preview_csv_import(
+        return preview_statement_import(
             db,
             user_id=current_user.id,
             filename=payload.filename,
             content=payload.content,
+            content_base64=payload.content_base64,
+            mime_type=payload.mime_type,
             mapping=payload.mapping,
         )
     except StatementImportError as exc:
@@ -132,10 +134,11 @@ def confirm_import(
     db: Session = Depends(get_db),
 ) -> ImportConfirmResponse:
     try:
-        imported, skipped_duplicates = confirm_csv_import(
+        imported, skipped_duplicates = confirm_statement_import(
             db,
             user_id=current_user.id,
             rows=payload.rows,
+            source_format=payload.source,
         )
         return ImportConfirmResponse(
             imported=imported,
