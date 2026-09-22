@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowUpCircle, ArrowDownCircle, Search, Trash2, Pencil, Download, UploadCloud, SlidersHorizontal, X } from "lucide-react";
-import Link from "next/link";
 import { storage } from "@/lib/storage";
 import { api, HttpError, type Transaction } from "@/lib/api";
 import { AppLayout } from "@/components/AppLayout";
@@ -10,6 +9,7 @@ import { useHandleFetchError } from "@/hooks/useHandleFetchError";
 import { useToast } from "@/contexts/ToastContext";
 import { formatCurrency } from "@/lib/utils";
 import { formatCategoryLabel, normalizeCategoryKey } from "@/lib/category";
+import { StatementImportDialog } from "@/components/StatementImportDialog";
 
 type SourceFilter = "all" | "manual" | "import";
 type ExportFormat = "xlsx" | "csv";
@@ -26,6 +26,7 @@ export default function TransactionsPage() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [exportingFormat, setExportingFormat] = useState<ExportFormat | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
   const handleFetchError = useHandleFetchError();
   const { addToast } = useToast();
 
@@ -196,15 +197,15 @@ export default function TransactionsPage() {
             {exportingFormat === "csv" ? "..." : "CSV"}
           </button>
 
-          <Link
-            href="/transactions/import"
+          <button
+            onClick={() => setImportOpen(true)}
             aria-label="Importar extrato bancário"
             title="Importar extrato bancário"
             className="shrink-0 flex items-center justify-center gap-2 h-[42px] w-[42px] sm:w-auto sm:px-4 rounded-xl border border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-emerald-500/40 hover:text-emerald-400 active:scale-95 transition-all text-sm font-medium"
           >
             <UploadCloud size={18} />
             <span className="hidden sm:inline">Importar extrato</span>
-          </Link>
+          </button>
         </div>
       </div>
 
@@ -450,6 +451,11 @@ export default function TransactionsPage() {
         </>
       )}
     </div>
+    <StatementImportDialog
+      open={importOpen}
+      onClose={() => setImportOpen(false)}
+      onImported={fetchTransactions}
+    />
     </AppLayout>
   );
 }
@@ -457,7 +463,7 @@ export default function TransactionsPage() {
 function transactionSourceFilter(
   source: Transaction["source"],
 ): SourceFilter | "whatsapp" {
-  if (source === "import") return "import";
+  if (source === "import" || source === "import_csv") return "import";
   if (
     source === "whatsapp_text" ||
     source === "whatsapp_audio" ||
@@ -481,13 +487,14 @@ function TransactionSourceBadge({
     dashboard_manual: "Manual",
     web: "Manual",
     import: "Importada",
+    import_csv: "Extrato importado",
     whatsapp_text: "WhatsApp texto",
     whatsapp_audio: "WhatsApp áudio",
     whatsapp_image: "WhatsApp imagem",
     whatsapp_document: "WhatsApp documento",
   };
   const normalizedSource = source ?? "manual";
-  const isImport = normalizedSource === "import";
+  const isImport = normalizedSource === "import" || normalizedSource === "import_csv";
   const isWhatsApp = normalizedSource.startsWith("whatsapp_");
 
   return (

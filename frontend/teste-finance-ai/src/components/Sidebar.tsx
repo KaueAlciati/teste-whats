@@ -9,7 +9,6 @@ import {
   BrainCircuit,
   Menu,
   X,
-  UploadCloud,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -17,7 +16,6 @@ import { usePathname } from "next/navigation";
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/dashboard" },
   { icon: Receipt, label: "Transações", href: "/transactions" },
-  { icon: UploadCloud, label: "Importar extrato", href: "/transactions/import" },
   { icon: Wallet, label: "Planejamento", href: "/planning" },
   { icon: BrainCircuit, label: "Insights IA", href: "/insights" },
   { icon: Settings, label: "Configurações", href: "/settings" },

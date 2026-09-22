@@ -17,6 +17,7 @@ TRANSACTION_SOURCES = {
     "whatsapp_document",
     "web",
     "dashboard_manual",
+    "import_csv",
 }
 
 

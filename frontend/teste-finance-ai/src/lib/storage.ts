@@ -313,7 +313,7 @@ export const storage = {
     rows: ImportConfirmRow[],
   ): Promise<ImportConfirmResponse> =>
     resolveWrite(
-      () => api.confirmImport(batchId, rows),
+      () => api.confirmImport(rows),
       () => localStorageApi.confirmImport(batchId, rows),
     ),
 

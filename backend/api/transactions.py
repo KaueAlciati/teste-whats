@@ -9,6 +9,12 @@ from backend.api.auth import get_current_user
 from backend.database.connection import get_db
 from backend.models.financial_transaction import FinancialTransaction
 from backend.models.user import User
+from backend.schemas.statement_import import (
+    ImportConfirmRequest,
+    ImportConfirmResponse,
+    ImportPreviewRequest,
+    ImportPreviewResponse,
+)
 from backend.schemas.transaction import TransactionResponse, TransactionWrite
 from backend.services.category_service import get_or_create_user_category
 from backend.services.financial_service import (
@@ -22,6 +28,11 @@ from backend.services.statement_export_service import (
     custom_period,
     current_month_period,
     generate_statement,
+)
+from backend.services.statement_import_service import (
+    StatementImportError,
+    confirm_csv_import,
+    preview_csv_import,
 )
 
 
@@ -91,6 +102,50 @@ def export_transactions(
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+@router.post("/import/preview", response_model=ImportPreviewResponse)
+def preview_import(
+    payload: ImportPreviewRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ImportPreviewResponse:
+    try:
+        return preview_csv_import(
+            db,
+            user_id=current_user.id,
+            filename=payload.filename,
+            content=payload.content,
+            mapping=payload.mapping,
+        )
+    except StatementImportError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from None
+
+
+@router.post("/import/confirm", response_model=ImportConfirmResponse)
+def confirm_import(
+    payload: ImportConfirmRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ImportConfirmResponse:
+    try:
+        imported, skipped_duplicates = confirm_csv_import(
+            db,
+            user_id=current_user.id,
+            rows=payload.rows,
+        )
+        return ImportConfirmResponse(
+            imported=imported,
+            skipped_duplicates=skipped_duplicates,
+        )
+    except (LookupError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from None
 
 
 @router.post(

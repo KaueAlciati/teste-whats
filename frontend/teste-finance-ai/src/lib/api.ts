@@ -38,6 +38,7 @@ export type Transaction = {
   source?:
     | "manual"
     | "import"
+    | "import_csv"
     | "dashboard_manual"
     | "web"
     | "whatsapp_text"
@@ -315,42 +316,71 @@ export type AuthTokenResponse = {
 };
 
 export type ImportSourceFormat = "csv" | "ofx";
-export type ImportRowStatus = "new" | "duplicated" | "error";
+export type ImportRowStatus =
+  | "ready"
+  | "possible_duplicate"
+  | "invalid"
+  | "new"
+  | "duplicated"
+  | "error";
+
+export type ImportColumnMapping = {
+  date_column: string;
+  description_column: string;
+  amount_column?: string | null;
+  type_column?: string | null;
+  credit_column?: string | null;
+  debit_column?: string | null;
+};
 
 export type ImportPreviewRow = {
   id: number;
+  line_number?: number;
   date: string | null;
   description: string;
   amount: number | null;
   type: "income" | "expense" | null;
   category: string | null;
-  category_source: "rule" | "none";
+  category_source: "rule" | "fallback" | "none";
   status: ImportRowStatus;
   error_reason: string | null;
 };
 
 export type ImportPreviewResponse = {
-  batch_id: number;
+  batch_id?: number;
   filename: string;
   source: ImportSourceFormat;
+  delimiter?: "," | ";";
+  columns?: string[];
+  mapping_required?: boolean;
+  mapping?: ImportColumnMapping | null;
+  sample_rows?: Array<Record<string, string>>;
   total: number;
-  new: number;
-  duplicated: number;
-  errors: number;
+  ready?: number;
+  possible_duplicates?: number;
+  invalid?: number;
+  new?: number;
+  duplicated?: number;
+  errors?: number;
   rows: ImportPreviewRow[];
 };
 
 export type ImportConfirmRow = {
-  staged_id: number;
+  staged_id?: number;
+  date?: string;
+  amount?: number;
+  type?: "income" | "expense";
   category: string;
   description: string;
+  allow_duplicate?: boolean;
 };
 
 export type ImportConfirmResponse = {
   status: string;
-  batch_id: number;
+  batch_id?: number;
   imported: number;
-  skipped: number;
+  skipped?: number;
+  skipped_duplicates?: number;
 };
 
 export type ImportBatchSummary = {
@@ -834,29 +864,42 @@ export const api = {
     });
   },
 
-  // Importação de extrato (CSV/OFX)
-  previewImport: async (file: File): Promise<ImportPreviewResponse> => {
-    const formData = new FormData();
-    formData.append("file", file);
-    // Sem Content-Type manual aqui: o navegador define o boundary do
-    // multipart/form-data sozinho. Timeout maior que o padrão porque
-    // parsing + deduplicação de um extrato grande pode levar mais
-    // que os 10s usados pelas outras chamadas.
+  // Importação de extrato CSV: a prévia não persiste dados.
+  previewImport: async (
+    file: File,
+    mapping?: ImportColumnMapping,
+  ): Promise<ImportPreviewResponse> => {
+    if (file.size > 5 * 1024 * 1024) {
+      throw new Error("O arquivo excede o limite de 5 MB.");
+    }
+    const content = await file.text();
+    // Timeout maior que o padrão porque análise e deduplicação de um
+    // extrato grande podem levar mais que as demais chamadas.
     return await fetchWithTimeout(
       `${API_URL}/transactions/import/preview`,
-      { method: "POST", body: formData },
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: file.name, content, mapping }),
+      },
       30000,
     );
   },
 
-  confirmImport: async (
-    batchId: number,
-    rows: ImportConfirmRow[],
-  ): Promise<ImportConfirmResponse> => {
+  confirmImport: async (rows: ImportConfirmRow[]): Promise<ImportConfirmResponse> => {
     return await fetchWithTimeout(`${API_URL}/transactions/import/confirm`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ batch_id: batchId, rows }),
+      body: JSON.stringify({
+        rows: rows.map((row) => ({
+          date: row.date,
+          amount: row.amount,
+          type: row.type,
+          category: row.category,
+          description: row.description,
+          allow_duplicate: row.allow_duplicate ?? false,
+        })),
+      }),
     });
   },
 
