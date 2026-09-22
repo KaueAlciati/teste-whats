@@ -1,4 +1,4 @@
-# Finance.AI
+# FinControl AI
 
 Controle financeiro pessoal com dashboard, metas, transações e insights gerados a partir do histórico real de cada conta.
 

@@ -82,9 +82,9 @@ const DIFFERENTIATORS = [
   },
   {
     icon: WifiOff,
-    title: "Continua funcionando sem conexão",
+    title: "Web e WhatsApp conectados",
     description:
-      "Se você ficar sem conexão, o sistema segue operando localmente no seu navegador até a conexão voltar.",
+      "As movimentações registradas pelo site e pelo WhatsApp ficam reunidas no mesmo histórico financeiro.",
   },
 ];
 
@@ -93,7 +93,7 @@ const HOW_IT_WORKS = [
     icon: UserPlus,
     step: "1",
     title: "Crie sua conta",
-    description: "Leva menos de um minuto — só nome, e-mail e senha.",
+    description: "Leva menos de um minuto — nome, WhatsApp, e-mail e senha.",
   },
   {
     icon: ListChecks,
@@ -111,13 +111,13 @@ const HOW_IT_WORKS = [
 
 const FAQ = [
   {
-    question: "Preciso pagar para usar o Finance.AI?",
+    question: "Preciso pagar para usar o FinControl AI?",
     answer: "Não. Você pode criar sua conta e usar o sistema gratuitamente.",
   },
   {
-    question: "Meus dados financeiros ficam visíveis para outras pessoas?",
+    question: "Posso usar o FinControl AI pelo WhatsApp?",
     answer:
-      "Não. Cada conta tem autenticação própria e acesso isolado aos próprios dados — isso já foi testado explicitamente com múltiplas contas simultâneas.",
+      "Sim. Você pode registrar movimentações por texto ou áudio, consultar suas finanças, acompanhar metas e solicitar extratos pelo WhatsApp.",
   },
   {
     question: "Como os insights são gerados?",
@@ -127,7 +127,7 @@ const FAQ = [
   {
     question: "O sistema funciona sem internet?",
     answer:
-      "Se você ficar sem conexão, o Finance.AI passa a funcionar localmente no seu navegador automaticamente, para você não ficar sem acesso.",
+      "Se você ficar sem conexão, o FinControl AI passa a funcionar localmente no seu navegador automaticamente, para você não ficar sem acesso.",
   },
   {
     question: "Funciona bem no celular?",
@@ -174,11 +174,13 @@ export default function LandingPage() {
       <header className="border-b border-zinc-800/60 sticky top-0 z-30 bg-zinc-950/80 backdrop-blur-md">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-emerald-500 flex items-center justify-center shadow-lg shadow-emerald-500/20 shrink-0">
-              <span className="text-black font-bold text-xs sm:text-sm">$</span>
-            </div>
+            <img
+              src="/logo-fincontrol.png"
+              alt="FinControl AI"
+              className="h-10 w-10 object-contain shrink-0"
+            />
             <span className="font-bold tracking-tight text-emerald-500 text-sm sm:text-base whitespace-nowrap">
-              FINANCE.AI
+              FinControl AI
             </span>
           </div>
           <nav className="hidden md:flex items-center gap-7">
@@ -367,7 +369,7 @@ export default function LandingPage() {
       {/* Diferenciais */}
       <section className="max-w-5xl mx-auto px-4 sm:px-6 pb-20 sm:pb-28">
         <div className="text-center mb-12">
-          <h2 className="text-2xl sm:text-3xl font-bold tracking-tight">Por que o Finance.AI</h2>
+          <h2 className="text-2xl sm:text-3xl font-bold tracking-tight">Por que o FinControl AI</h2>
           <p className="text-zinc-400 mt-3 max-w-lg mx-auto">
             Três decisões de arquitetura que fazem diferença no uso diário.
           </p>
@@ -442,7 +444,7 @@ export default function LandingPage() {
       {/* Footer */}
       <footer className="border-t border-zinc-800/60">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-zinc-500">
-          <span>© {new Date().getFullYear()} Finance.AI</span>
+          <span>© {new Date().getFullYear()} FinControl AI</span>
           <div className="flex items-center gap-5">
             <a href="#funcionalidades" className="hover:text-zinc-300 transition-colors">
               Funcionalidades

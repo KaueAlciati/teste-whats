@@ -1,5 +1,8 @@
 import "./globals.css";
+
 import { Manrope, JetBrains_Mono } from "next/font/google";
+import type { Metadata } from "next";
+
 import { AppProviders } from "@/components/providers";
 
 // Manrope carrega a interface (textos, títulos, botões): uma geométrica
@@ -7,6 +10,7 @@ import { AppProviders } from "@/components/providers";
 // JetBrains Mono é reservado para números — saldo, valores de transação,
 // percentuais de meta — para dar a precisão "de extrato" que combina com
 // um produto financeiro, e para os números alinharem em colunas (tabular).
+
 const manrope = Manrope({
   subsets: ["latin"],
   variable: "--font-sans",
@@ -19,6 +23,12 @@ const jetbrainsMono = JetBrains_Mono({
   display: "swap",
   weight: ["400", "500", "600", "700"],
 });
+
+export const metadata: Metadata = {
+  title: "FinControl AI",
+  description:
+    "Assistente financeiro inteligente para organizar transações, metas e acompanhar suas finanças.",
+};
 
 export default function RootLayout({
   children,

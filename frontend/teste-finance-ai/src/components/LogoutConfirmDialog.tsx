@@ -59,7 +59,7 @@ export function LogoutConfirmDialog() {
           </div>
           <DialogTitle>Sair da sua conta?</DialogTitle>
           <DialogDescription>
-            Você precisará entrar novamente com seu e-mail e senha para acessar o Finance.AI.
+            Você precisará entrar novamente com seu e-mail e senha para acessar o FinControl AI.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

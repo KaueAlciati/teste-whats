@@ -33,12 +33,14 @@ export default function ForgotPasswordPage() {
         <div className="w-full max-w-md">
           <div className="text-center mb-6 sm:mb-8">
             <Link href="/" className="inline-block">
-              <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-emerald-500 mx-auto mb-4 shadow-lg shadow-emerald-500/20 ring-1 ring-white/10 flex items-center justify-center">
-                <span className="text-black font-bold text-lg sm:text-xl">$</span>
-              </div>
+              <img
+                src="/logo-fincontrol.png"
+                alt="FinControl AI"
+                className="h-24 w-40 object-contain mx-auto mb-4"
+              />
             </Link>
             <h1 className="text-2xl sm:text-3xl font-bold text-emerald-500 mb-2 tracking-tight">
-              Finance.AI
+              FinControl AI
             </h1>
           </div>
 
@@ -71,12 +73,14 @@ export default function ForgotPasswordPage() {
       <div className="w-full max-w-md">
         <div className="text-center mb-6 sm:mb-8">
           <Link href="/" className="inline-block">
-            <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-emerald-500 mx-auto mb-4 shadow-lg shadow-emerald-500/20 ring-1 ring-white/10 flex items-center justify-center">
-              <span className="text-black font-bold text-lg sm:text-xl">$</span>
-            </div>
+            <img
+              src="/logo-fincontrol.png"
+              alt="FinControl AI"
+              className="h-24 w-40 object-contain mx-auto mb-4"
+            />
           </Link>
           <h1 className="text-2xl sm:text-3xl font-bold text-emerald-500 mb-2 tracking-tight">
-            Finance.AI
+            FinControl AI
           </h1>
           <p className="text-zinc-400 text-sm sm:text-base">
             Recupere o acesso à sua conta

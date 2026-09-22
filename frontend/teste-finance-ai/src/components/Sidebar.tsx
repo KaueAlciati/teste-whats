@@ -75,14 +75,13 @@ export function Sidebar() {
         style={{ paddingTop: "env(safe-area-inset-top)" }}
       >
         <div className="flex items-center justify-between p-6">
-          <h1 className="flex items-center gap-2 font-bold text-xl tracking-tight">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-500 text-[13px] font-mono font-bold text-emerald-950">
-              $
-            </span>
-            <span className="text-zinc-50">
-              Finance<span className="text-emerald-500">.ai</span>
-            </span>
-          </h1>
+          <div className="flex items-center">
+             <img
+              src="/logo-fincontrol.png"
+              alt="FinControl AI"
+              className="h-16 w-36 object-contain"
+            />
+          </div>
 
           {/* Botão de fechar — só aparece dentro do drawer mobile */}
           <button

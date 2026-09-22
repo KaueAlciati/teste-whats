@@ -13,7 +13,7 @@ from backend.api.webhook import router as webhook_router
 
 
 app = FastAPI(
-    title="TCC Financeiro",
+    title="FinControl AI",
     version="1.0.0"
 )
 
