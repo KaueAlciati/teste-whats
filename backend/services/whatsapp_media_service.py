@@ -12,11 +12,13 @@ logger = logging.getLogger("uvicorn.error")
 GRAPH_API_VERSION = "v25.0"
 MAX_AUDIO_BYTES = 25 * 1024 * 1024
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
 MEDIA_METADATA_TIMEOUT_SECONDS = 10.0
 MEDIA_DOWNLOAD_TIMEOUT_SECONDS = 30.0
-SUPPORTED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
+SUPPORTED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png"}
+SUPPORTED_DOCUMENT_MIME_TYPES = {"application/pdf"}
 
-MediaKind = Literal["audio", "image"]
+MediaKind = Literal["audio", "image", "document"]
 
 
 class WhatsAppMediaError(RuntimeError):
@@ -42,6 +44,7 @@ async def download_whatsapp_media(
     media_id: str,
     *,
     fallback_mime_type: str | None = None,
+    fallback_filename: str | None = None,
     media_kind: MediaKind = "audio",
 ) -> WhatsAppMedia:
     token = os.getenv("WHATSAPP_TOKEN")
@@ -65,7 +68,7 @@ async def download_whatsapp_media(
         media_url = metadata.get("url")
         if not isinstance(media_url, str) or not media_url:
             raise WhatsAppMediaError("URL de mídia ausente")
-        if media_kind == "image":
+        if media_kind in {"image", "document"}:
             logger.info("URL temporária da Meta obtida")
 
         max_bytes = _max_bytes_for_kind(media_kind)
@@ -78,7 +81,7 @@ async def download_whatsapp_media(
             fallback_mime_type,
         )
         _validate_mime_type(mime_type, media_kind)
-        if media_kind == "image":
+        if media_kind in {"image", "document"}:
             logger.info("mime_type válido: mime_type=%s", mime_type)
         content = await _download_limited(
             client,
@@ -89,13 +92,17 @@ async def download_whatsapp_media(
             declared_mime_type=mime_type,
         )
 
-    if media_kind == "image":
-        _validate_image_signature(content, mime_type)
+    if media_kind in {"image", "document"}:
+        _validate_file_signature(content, mime_type)
 
     return WhatsAppMedia(
         content=content,
         mime_type=mime_type,
-        filename=_filename_for_mime_type(mime_type, media_kind),
+        filename=_safe_media_filename(
+            fallback_filename,
+            mime_type=mime_type,
+            media_kind=media_kind,
+        ),
     )
 
 
@@ -210,9 +217,10 @@ def _filename_for_mime_type(mime_type: str, media_kind: MediaKind) -> str:
         "audio/webm": ".webm",
         "image/jpeg": ".jpg",
         "image/png": ".png",
-        "image/webp": ".webp",
+        "application/pdf": ".pdf",
     }
-    default_extension = ".ogg" if media_kind == "audio" else ".img"
+    defaults = {"audio": ".ogg", "image": ".img", "document": ".bin"}
+    default_extension = defaults[media_kind]
     return f"{media_kind}{extensions.get(mime_type, default_extension)}"
 
 
@@ -221,12 +229,19 @@ def _max_bytes_for_kind(media_kind: MediaKind) -> int:
         return MAX_AUDIO_BYTES
     if media_kind == "image":
         return MAX_IMAGE_BYTES
+    if media_kind == "document":
+        return MAX_DOCUMENT_BYTES
     raise WhatsAppMediaUnsupportedTypeError("Tipo de mídia não suportado")
 
 
 def _validate_mime_type(mime_type: str, media_kind: MediaKind) -> None:
     if media_kind == "image" and mime_type not in SUPPORTED_IMAGE_MIME_TYPES:
         raise WhatsAppMediaUnsupportedTypeError("Formato de imagem não suportado")
+    if (
+        media_kind == "document"
+        and mime_type not in SUPPORTED_DOCUMENT_MIME_TYPES
+    ):
+        raise WhatsAppMediaUnsupportedTypeError("Formato de documento não suportado")
     if media_kind == "audio" and not (
         mime_type.startswith("audio/")
         or mime_type == "application/octet-stream"
@@ -234,18 +249,35 @@ def _validate_mime_type(mime_type: str, media_kind: MediaKind) -> None:
         raise WhatsAppMediaUnsupportedTypeError("Formato de áudio não suportado")
 
 
-def _validate_image_signature(content: bytes, mime_type: str) -> None:
+def _validate_file_signature(content: bytes, mime_type: str) -> None:
     signatures_match = {
         "image/jpeg": content.startswith(b"\xff\xd8\xff"),
         "image/png": content.startswith(b"\x89PNG\r\n\x1a\n"),
-        "image/webp": (
-            len(content) >= 12
-            and content.startswith(b"RIFF")
-            and content[8:12] == b"WEBP"
-        ),
+        "application/pdf": content.startswith(b"%PDF-"),
     }
     if not signatures_match.get(mime_type, False):
-        raise WhatsAppMediaUnsupportedTypeError("Conteúdo da imagem inválido")
+        raise WhatsAppMediaUnsupportedTypeError("Conteúdo da mídia inválido")
+
+
+def _safe_media_filename(
+    fallback_filename: str | None,
+    *,
+    mime_type: str,
+    media_kind: MediaKind,
+) -> str:
+    generated = _filename_for_mime_type(mime_type, media_kind)
+    if not fallback_filename:
+        return generated
+    normalized = fallback_filename.replace("\\", "/").split("/")[-1]
+    normalized = " ".join(
+        normalized.replace("\r", " ").replace("\n", " ").split()
+    )
+    if not normalized or len(normalized) > 255:
+        return generated
+    expected_extension = "." + generated.rsplit(".", 1)[-1]
+    if not normalized.casefold().endswith(expected_extension):
+        return generated
+    return normalized
 
 
 def _parse_size(value: object) -> int | None:

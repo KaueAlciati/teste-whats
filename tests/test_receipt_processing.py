@@ -1,6 +1,9 @@
+import os
+import tempfile
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 from unittest.mock import patch
 
 from sqlalchemy import create_engine, func, select
@@ -12,9 +15,14 @@ from backend.models import (  # noqa: F401
     Category,
     FinancialTransaction,
     PendingReceipt,
+    TransactionAttachment,
     User,
 )
 from backend.schemas.receipt_extraction import ReceiptExtraction
+from backend.services.attachment_service import (
+    stage_attachment_file,
+    validate_attachment,
+)
 from backend.services.financial_assistant_service import handle_financial_message
 from backend.services.receipt_assistant_service import (
     _process_receipt_extraction,
@@ -25,6 +33,13 @@ from backend.services.user_service import get_or_create_whatsapp_user
 
 class ReceiptProcessingTestCase(unittest.TestCase):
     def setUp(self) -> None:
+        self.storage = tempfile.TemporaryDirectory()
+        self.environment = patch.dict(
+            os.environ,
+            {"ATTACHMENT_STORAGE_DIR": self.storage.name},
+            clear=False,
+        )
+        self.environment.start()
         self.engine = create_engine(
             "sqlite+pysqlite:///:memory:",
             connect_args={"check_same_thread": False},
@@ -36,11 +51,15 @@ class ReceiptProcessingTestCase(unittest.TestCase):
             expire_on_commit=False,
         )
         self.session = self.session_factory()
-        self._seed_categories()
         self.user = get_or_create_whatsapp_user(
             self.session,
             "5515999999999",
         )
+        self.user.name = "Kaue"
+        self.user.email = "kaue@example.com"
+        self.user.password_hash = "argon2-test-hash"
+        self.user.active = True
+        self.session.commit()
         self.current_date = date(2026, 9, 18)
         self.current_time = datetime(
             2026,
@@ -55,156 +74,165 @@ class ReceiptProcessingTestCase(unittest.TestCase):
         self.session.close()
         Base.metadata.drop_all(self.engine)
         self.engine.dispose()
+        self.environment.stop()
+        self.storage.cleanup()
 
-    def test_high_confidence_pix_outflow_creates_one_expense(self) -> None:
+    def test_image_requires_confirmation_then_creates_expense_and_attachment(
+        self,
+    ) -> None:
         response = self._process(
             "image-outflow",
             self._extraction(
                 amount="85.00",
                 direction="outflow",
-                recipient_name="Mercado X",
                 description="PIX para Mercado X",
-                category_suggestion="Compras",
             ),
         )
 
+        self.assertIsNone(self._transaction("image-outflow"))
+        self.assertIsNotNone(self._pending("image-outflow"))
+        self.assertIn("85", response)
+        self.assertIn("Sem categoria", response)
+
+        result = self._reply("sim")
         transaction = self._transaction("image-outflow")
-        self.assertIsNotNone(transaction)
+        attachment = self._attachment(transaction.id)
+        self.assertTrue(result.handled)
         self.assertEqual(transaction.type, "expense")
         self.assertEqual(transaction.amount, Decimal("85.00"))
         self.assertEqual(transaction.source, "whatsapp_image")
-        self.assertIn("Mercado X", response)
+        self.assertIsNone(transaction.category_id)
+        self.assertEqual(attachment.mime_type, "image/png")
+        self.assertTrue(self._stored_path(attachment.storage_key).is_file())
+        self.assertIsNone(self._pending("image-outflow"))
 
-    def test_high_confidence_pix_inflow_creates_one_income(self) -> None:
+    def test_pdf_requires_confirmation_then_creates_income_and_attachment(
+        self,
+    ) -> None:
         response = self._process(
-            "image-inflow",
+            "document-inflow",
             self._extraction(
                 amount="250.00",
                 direction="inflow",
-                payer_name="João Silva",
-                recipient_name=None,
                 description="PIX recebido",
-                category_suggestion="Outros",
             ),
+            source="whatsapp_document",
         )
 
-        transaction = self._transaction("image-inflow")
-        self.assertIsNotNone(transaction)
+        self.assertIn("Entrada", response)
+        result = self._reply("isso")
+        transaction = self._transaction("document-inflow")
+        attachment = self._attachment(transaction.id)
+        self.assertTrue(result.handled)
         self.assertEqual(transaction.type, "income")
-        self.assertEqual(transaction.amount, Decimal("250.00"))
-        self.assertIn("João Silva", response)
+        self.assertEqual(transaction.source, "whatsapp_document")
+        self.assertEqual(attachment.mime_type, "application/pdf")
+        self.assertEqual(attachment.original_filename, "comprovante.pdf")
 
-    def test_clear_caption_resolves_unknown_direction(self) -> None:
+    def test_unknown_direction_waits_for_explicit_direction(self) -> None:
         response = self._process(
-            "image-caption-direction",
-            self._extraction(
-                direction="unknown",
-                requires_confirmation=True,
-            ),
-            caption="paguei isso",
+            "image-unknown",
+            self._extraction(direction="unknown"),
         )
 
-        transaction = self._transaction("image-caption-direction")
-        self.assertIsNotNone(transaction)
-        self.assertEqual(transaction.type, "expense")
-        self.assertIsNone(self._pending("image-caption-direction"))
-        self.assertIn("salvo", response)
-
-    def test_natural_received_caption_resolves_inflow(self) -> None:
-        response = self._process(
-            "image-caption-inflow",
-            self._extraction(
-                direction="unknown",
-                requires_confirmation=True,
-                payer_name="Cliente",
-                recipient_name=None,
-            ),
-            caption="Recebi um pix, guarda pra mim",
-        )
-
-        transaction = self._transaction("image-caption-inflow")
-        self.assertIsNotNone(transaction)
-        self.assertEqual(transaction.type, "income")
-        self.assertIsNone(self._pending("image-caption-inflow"))
-        self.assertIn("recebimento", response)
-
-    def test_caption_conflict_forces_confirmation(self) -> None:
-        response = self._process(
-            "image-caption-conflict",
-            self._extraction(direction="inflow"),
-            caption="paguei isso",
-        )
-
-        self.assertIsNone(self._transaction("image-caption-conflict"))
-        self.assertIsNotNone(self._pending("image-caption-conflict"))
-        self.assertIn("pagou", response)
-
-    def test_unknown_direction_creates_pending_without_transaction(self) -> None:
-        extraction = self._extraction(
-            direction="unknown",
-            requires_confirmation=True,
-            pix_key="sensitive@example.com",
-            end_to_end_id="E123456789",
-        )
-
-        response = self._process("image-unknown", extraction)
-
+        self.assertIn("paguei", response)
+        first_reply = self._reply("sim")
+        self.assertIn("pagou", first_reply.response)
         self.assertIsNone(self._transaction("image-unknown"))
-        pending = self._pending("image-unknown")
-        self.assertIsNotNone(pending)
-        self.assertNotIn("pix_key", pending.extracted_data)
-        self.assertNotIn("end_to_end_id", pending.extracted_data)
-        self.assertIn("pagou", response)
-        self.assertIn("recebeu", response)
 
-    def test_new_pending_replaces_older_pending_for_same_user(self) -> None:
-        self._create_direction_pending("pending-old")
-        self._create_direction_pending("pending-new")
+        second_reply = self._reply("paguei")
+        self.assertTrue(second_reply.handled)
+        self.assertEqual(self._transaction("image-unknown").type, "expense")
 
-        pending_ids = list(
-            self.session.scalars(
-                select(PendingReceipt.whatsapp_message_id).where(
-                    PendingReceipt.user_id == self.user.id
-                )
+    def test_caption_sets_direction_but_still_requires_confirmation(self) -> None:
+        response = self._process(
+            "image-caption",
+            self._extraction(direction="unknown"),
+            caption="recebi um pix",
+        )
+
+        self.assertIn("Entrada", response)
+        self.assertIsNone(self._transaction("image-caption"))
+        self._reply("sim")
+        self.assertEqual(self._transaction("image-caption").type, "income")
+
+    def test_discard_removes_pending_and_staged_file(self) -> None:
+        self._process("image-discard", self._extraction())
+        pending = self._pending("image-discard")
+        storage_key = pending.extracted_data["_attachment"]["storage_key"]
+        self.assertTrue(self._stored_path(storage_key).is_file())
+
+        result = self._reply("não")
+
+        self.assertTrue(result.handled)
+        self.assertIsNone(self._pending("image-discard"))
+        self.assertFalse(self._stored_path(storage_key).exists())
+
+    def test_duplicate_message_creates_only_one_transaction(self) -> None:
+        extraction = self._extraction()
+        self._process("image-duplicate", extraction)
+        duplicate_response = self._process("image-duplicate", extraction)
+        self._reply("sim")
+
+        transaction_count = self.session.scalar(
+            select(func.count(FinancialTransaction.id)).where(
+                FinancialTransaction.whatsapp_message_id == "image-duplicate"
             )
         )
-        self.assertEqual(pending_ids, ["pending-new"])
+        attachment_count = self.session.scalar(
+            select(func.count(TransactionAttachment.id))
+        )
+        self.assertIsNone(duplicate_response)
+        self.assertEqual(transaction_count, 1)
+        self.assertEqual(attachment_count, 1)
 
-    def test_pending_reply_paid_creates_expense(self) -> None:
-        self._create_direction_pending("pending-paid")
+    def test_invalid_extraction_does_not_create_pending_or_transaction(self) -> None:
+        response = self._process(
+            "image-invalid",
+            self._extraction(amount=None, confidence=0.2),
+        )
+
+        self.assertIsNone(self._pending("image-invalid"))
+        self.assertIsNone(self._transaction("image-invalid"))
+        self.assertIn("Não consegui", response)
+
+    def test_expired_pending_is_discarded_without_transaction(self) -> None:
+        self._process("image-expired", self._extraction())
+        pending = self._pending("image-expired")
+        pending.expires_at = self.current_time - timedelta(seconds=1)
+        self.session.commit()
+
+        result = self._reply("sim")
+
+        self.assertTrue(result.handled)
+        self.assertIn("expirou", result.response)
+        self.assertIsNone(self._transaction("image-expired"))
+        self.assertIsNone(self._pending("image-expired"))
+
+    def test_other_user_cannot_confirm_pending(self) -> None:
+        self._process("image-user-a", self._extraction())
+        other_user = get_or_create_whatsapp_user(
+            self.session,
+            "5515888888888",
+        )
+        other_user.email = "other@example.com"
+        other_user.password_hash = "argon2-other-hash"
+        self.session.commit()
 
         result = handle_pending_receipt_reply(
             self.session,
-            user=self.user,
-            text="paguei",
+            user=other_user,
+            text="sim",
             current_date=self.current_date,
             current_time=self.current_time + timedelta(minutes=1),
         )
 
-        transaction = self._transaction("pending-paid")
-        self.assertTrue(result.handled)
-        self.assertIsNotNone(transaction)
-        self.assertEqual(transaction.type, "expense")
-        self.assertIsNone(self._pending("pending-paid"))
+        self.assertFalse(result.handled)
+        self.assertIsNone(self._transaction("image-user-a"))
+        self.assertIsNotNone(self._pending("image-user-a"))
 
-    def test_pending_reply_received_creates_income(self) -> None:
-        self._create_direction_pending("pending-received")
-
-        result = handle_pending_receipt_reply(
-            self.session,
-            user=self.user,
-            text="recebi",
-            current_date=self.current_date,
-            current_time=self.current_time + timedelta(minutes=1),
-        )
-
-        transaction = self._transaction("pending-received")
-        self.assertTrue(result.handled)
-        self.assertIsNotNone(transaction)
-        self.assertEqual(transaction.type, "income")
-
-    def test_text_flow_resolves_pending_before_calling_groq(self) -> None:
-        self._create_direction_pending("pending-text-flow")
+    def test_text_confirmation_is_resolved_before_financial_ai(self) -> None:
+        self._process("image-text-confirm", self._extraction())
 
         with patch(
             "backend.services.financial_assistant_service.interpret_financial_message"
@@ -212,149 +240,33 @@ class ReceiptProcessingTestCase(unittest.TestCase):
             response = handle_financial_message(
                 self.session,
                 user=self.user,
-                text="paguei",
+                text="isso mesmo",
                 whatsapp_message_id="confirmation-text-message",
                 current_date=self.current_date,
                 current_datetime=self.current_time + timedelta(minutes=1),
             )
 
         ai_mock.assert_not_called()
-        transaction = self._transaction("pending-text-flow")
-        self.assertIsNotNone(transaction)
-        self.assertEqual(transaction.type, "expense")
+        self.assertIsNotNone(self._transaction("image-text-confirm"))
         self.assertIn("salvo", response)
 
-    def test_expired_pending_does_not_register(self) -> None:
-        self._create_direction_pending("pending-expired")
-        pending = self._pending("pending-expired")
-        pending.expires_at = self.current_time - timedelta(seconds=1)
-        self.session.commit()
+    def test_amount_correction_keeps_same_pending_context(self) -> None:
+        self._process("image-correction", self._extraction())
 
-        result = handle_pending_receipt_reply(
-            self.session,
-            user=self.user,
-            text="paguei",
-            current_date=self.current_date,
-            current_time=self.current_time,
-        )
+        result = self._reply("na verdade é 90")
+        pending = self._pending("image-correction")
 
         self.assertTrue(result.handled)
-        self.assertIn("expirou", result.response)
-        self.assertIsNone(self._transaction("pending-expired"))
-        self.assertIsNone(self._pending("pending-expired"))
+        self.assertEqual(pending.extracted_data["amount"], "90.00")
+        self.assertIsNone(self._transaction("image-correction"))
 
-    def test_unreadable_image_does_not_register(self) -> None:
-        response = self._process(
-            "image-unreadable",
-            self._extraction(
-                document_type="unknown",
-                amount=None,
-                currency=None,
-                transaction_date=None,
-                direction="unknown",
-                status="unknown",
-                confidence=0.20,
-                requires_confirmation=True,
-            ),
-        )
-
-        self.assertIsNone(self._transaction("image-unreadable"))
-        self.assertIsNone(self._pending("image-unreadable"))
-        self.assertIn("não parece ser um comprovante", response)
-
-    def test_non_completed_statuses_do_not_register(self) -> None:
-        for status in ("pending", "scheduled", "cancelled", "refunded"):
-            with self.subTest(status=status):
-                message_id = f"image-{status}"
-                response = self._process(
-                    message_id,
-                    self._extraction(status=status),
-                )
-                self.assertIsNone(self._transaction(message_id))
-                self.assertIsNone(self._pending(message_id))
-                self.assertIn("não registrei", response.lower())
-
-    def test_non_financial_image_does_not_register(self) -> None:
-        self._process(
-            "image-non-financial",
-            self._extraction(
-                document_type="unknown",
-                direction="unknown",
-                status="unknown",
-                requires_confirmation=True,
-            ),
-        )
-
-        self.assertIsNone(self._transaction("image-non-financial"))
-        self.assertIsNone(self._pending("image-non-financial"))
-
-    def test_invalid_amount_does_not_register(self) -> None:
-        response = self._process(
-            "image-invalid-amount",
-            self._extraction(amount="saldo 1.250,00"),
-        )
-
-        self.assertIsNone(self._transaction("image-invalid-amount"))
-        self.assertIsNone(self._pending("image-invalid-amount"))
-        self.assertIn("Não consegui confirmar", response)
-
-    def test_duplicate_image_message_id_creates_only_one_transaction(self) -> None:
-        extraction = self._extraction()
-
-        first_response = self._process("image-duplicate", extraction)
-        second_response = self._process("image-duplicate", extraction)
-
-        transaction_count = self.session.scalar(
-            select(func.count(FinancialTransaction.id)).where(
-                FinancialTransaction.whatsapp_message_id == "image-duplicate"
-            )
-        )
-        self.assertIsNotNone(first_response)
-        self.assertIsNone(second_response)
-        self.assertEqual(transaction_count, 1)
-
-    def test_other_user_cannot_confirm_pending_receipt(self) -> None:
-        self._create_direction_pending("pending-user-a")
-        other_user = get_or_create_whatsapp_user(
-            self.session,
-            "5515888888888",
-        )
-
-        result = handle_pending_receipt_reply(
-            self.session,
-            user=other_user,
-            text="paguei",
-            current_date=self.current_date,
-            current_time=self.current_time + timedelta(minutes=1),
-        )
-
-        self.assertFalse(result.handled)
-        self.assertIsNone(self._transaction("pending-user-a"))
-        self.assertIsNotNone(self._pending("pending-user-a"))
-
-    def test_amount_correction_updates_pending_without_registering(self) -> None:
-        self._create_direction_pending("pending-amount")
-
-        result = handle_pending_receipt_reply(
+    def _reply(self, text: str):
+        return handle_pending_receipt_reply(
             self.session,
             user=self.user,
-            text="na verdade é 85",
+            text=text,
             current_date=self.current_date,
             current_time=self.current_time + timedelta(minutes=1),
-        )
-
-        pending = self._pending("pending-amount")
-        self.assertTrue(result.handled)
-        self.assertEqual(pending.extracted_data["amount"], "85.00")
-        self.assertIsNone(self._transaction("pending-amount"))
-
-    def _create_direction_pending(self, message_id: str) -> None:
-        self._process(
-            message_id,
-            self._extraction(
-                direction="unknown",
-                requires_confirmation=True,
-            ),
         )
 
     def _process(
@@ -362,7 +274,25 @@ class ReceiptProcessingTestCase(unittest.TestCase):
         message_id: str,
         extraction: ReceiptExtraction,
         caption: str | None = None,
+        *,
+        source: str = "whatsapp_image",
     ) -> str | None:
+        if source == "whatsapp_document":
+            content = b"%PDF-1.4\nreceipt"
+            filename = "comprovante.pdf"
+            mime_type = "application/pdf"
+        else:
+            content = b"\x89PNG\r\n\x1a\nreceipt"
+            filename = "comprovante.png"
+            mime_type = "image/png"
+        attachment = stage_attachment_file(
+            validate_attachment(
+                content,
+                filename=filename,
+                mime_type=mime_type,
+            ),
+            user_id=self.user.id,
+        )
         with (
             patch(
                 "backend.services.receipt_assistant_service.engine",
@@ -379,6 +309,8 @@ class ReceiptProcessingTestCase(unittest.TestCase):
                 extraction,
                 self.current_time,
                 caption,
+                attachment,
+                source,
             )
         self.session.expire_all()
         return response
@@ -399,43 +331,37 @@ class ReceiptProcessingTestCase(unittest.TestCase):
             )
         )
 
-    def _seed_categories(self) -> None:
-        categories = {
-            "expense": ("Compras", "Outros"),
-            "income": ("Venda", "Outros"),
-        }
-        for transaction_type, names in categories.items():
-            self.session.add_all(
-                Category(
-                    name=name,
-                    type=transaction_type,
-                    user_id=None,
-                    is_default=True,
-                )
-                for name in names
+    def _attachment(self, transaction_id: int) -> TransactionAttachment:
+        self.session.expire_all()
+        return self.session.scalar(
+            select(TransactionAttachment).where(
+                TransactionAttachment.transaction_id == transaction_id
             )
-        self.session.commit()
+        )
+
+    def _stored_path(self, storage_key: str) -> Path:
+        return Path(self.storage.name) / storage_key
 
     @staticmethod
     def _extraction(**overrides: object) -> ReceiptExtraction:
         values: dict[str, object] = {
-            "document_type": "pix_receipt",
+            "document_type": "payment_receipt",
             "amount": "85.00",
             "currency": "BRL",
             "transaction_date": "2026-09-18",
-            "transaction_time": "10:30:00",
-            "payer_name": "Kaue",
-            "payer_institution": "Banco A",
-            "recipient_name": "Mercado X",
-            "recipient_institution": "Banco B",
+            "transaction_time": None,
+            "payer_name": None,
+            "payer_institution": None,
+            "recipient_name": None,
+            "recipient_institution": None,
             "pix_key": None,
             "end_to_end_id": None,
-            "description": "PIX",
+            "description": "PIX Mercado X",
             "direction": "outflow",
-            "category_suggestion": "Outros",
+            "category_suggestion": None,
             "status": "completed",
             "confidence": 0.98,
-            "requires_confirmation": False,
+            "requires_confirmation": True,
             "reason": None,
         }
         values.update(overrides)

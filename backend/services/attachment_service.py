@@ -90,8 +90,63 @@ def store_attachment_file(
     *,
     user_id: int,
 ) -> StoredAttachment:
+    return _write_attachment_file(
+        attachment,
+        user_id=user_id,
+        prefix="users",
+    )
+
+
+def stage_attachment_file(
+    attachment: ValidatedAttachment,
+    *,
+    user_id: int,
+) -> StoredAttachment:
+    return _write_attachment_file(
+        attachment,
+        user_id=user_id,
+        prefix="pending/users",
+    )
+
+
+def promote_staged_attachment(
+    staged: StoredAttachment,
+    *,
+    user_id: int,
+) -> StoredAttachment:
+    expected_prefix = f"pending/users/{user_id}/"
+    if not staged.storage_key.startswith(expected_prefix):
+        raise AttachmentStorageError("Anexo pendente inválido")
+    staged_path = _storage_path(staged.storage_key)
+    try:
+        content = staged_path.read_bytes()
+    except OSError as exc:
+        raise AttachmentStorageError(
+            "Arquivo pendente do comprovante não está disponível"
+        ) from exc
+    if len(content) != staged.size_bytes:
+        raise AttachmentStorageError("Arquivo pendente está corrompido")
+    if hashlib.sha256(content).hexdigest() != staged.sha256:
+        raise AttachmentStorageError("Arquivo pendente está corrompido")
+    validated = validate_attachment(
+        content,
+        filename=staged.original_filename,
+        mime_type=staged.mime_type,
+    )
+    return store_attachment_file(validated, user_id=user_id)
+
+
+def _write_attachment_file(
+    attachment: ValidatedAttachment,
+    *,
+    user_id: int,
+    prefix: str,
+) -> StoredAttachment:
     identifier = uuid4().hex
-    storage_key = f"users/{user_id}/{identifier[:2]}/{identifier}{attachment.extension}"
+    storage_key = (
+        f"{prefix}/{user_id}/{identifier[:2]}/"
+        f"{identifier}{attachment.extension}"
+    )
     target = _storage_path(storage_key)
     temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
     try:

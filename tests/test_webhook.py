@@ -117,6 +117,50 @@ class WebhookTestCase(unittest.TestCase):
             "paguei isso",
         )
 
+    def test_pdf_document_schedules_same_receipt_flow(self) -> None:
+        payload = self._document_payload("wamid.document-message")
+        process_mock = AsyncMock(return_value=None)
+
+        with patch.object(
+            webhook,
+            "process_financial_document_message",
+            process_mock,
+        ):
+            response = self.client.post("/webhook", json=payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+        process_mock.assert_awaited_once_with(
+            "5515999999999",
+            "wamid.document-message",
+            "document-media-id",
+            "application/pdf",
+            "comprovante.pdf",
+            "comprovante",
+        )
+
+    def test_unauthorized_image_is_not_processed(self) -> None:
+        process_mock = AsyncMock(return_value=None)
+        with (
+            patch.object(
+                webhook,
+                "authorize_registered_whatsapp_phone",
+                return_value=False,
+            ),
+            patch.object(
+                webhook,
+                "process_financial_image_message",
+                process_mock,
+            ),
+        ):
+            response = self.client.post(
+                "/webhook",
+                json=self._image_payload("wamid.unauthorized-image"),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        process_mock.assert_not_awaited()
+
     def test_audio_download_error_does_not_break_webhook(self) -> None:
         send_mock = AsyncMock(return_value=True)
 
@@ -303,6 +347,29 @@ class WebhookTestCase(unittest.TestCase):
                                 "id": "image-media-id",
                                 "mime_type": "image/jpeg",
                                 "caption": "paguei isso",
+                            },
+                        }],
+                    }
+                }]
+            }]
+        }
+
+    @staticmethod
+    def _document_payload(message_id: str) -> dict[str, object]:
+        return {
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "metadata": {"display_phone_number": "5511000000000"},
+                        "messages": [{
+                            "from": "5515999999999",
+                            "id": message_id,
+                            "type": "document",
+                            "document": {
+                                "id": "document-media-id",
+                                "mime_type": "application/pdf",
+                                "filename": "comprovante.pdf",
+                                "caption": "comprovante",
                             },
                         }],
                     }

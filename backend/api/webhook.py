@@ -10,6 +10,7 @@ from backend.services.financial_assistant_service import (
     process_financial_message,
 )
 from backend.services.receipt_assistant_service import (
+    process_financial_document_message,
     process_financial_image_message,
 )
 from backend.services.user_service import authorize_registered_whatsapp_phone
@@ -97,6 +98,33 @@ async def receber_mensagem(request: Request, background_tasks: BackgroundTasks):
             message_id,
             media_id,
             mime_type,
+            caption,
+        )
+
+    for (
+        destino,
+        message_id,
+        media_id,
+        mime_type,
+        filename,
+        caption,
+    ) in extrair_mensagens_de_documento(dados):
+        destino = _somente_digitos(destino)
+        if not destino:
+            continue
+        if not await asyncio.to_thread(
+            authorize_registered_whatsapp_phone,
+            destino,
+        ):
+            continue
+        logger.info("Documento recebido")
+        background_tasks.add_task(
+            process_financial_document_message,
+            destino,
+            message_id,
+            media_id,
+            mime_type,
+            filename,
             caption,
         )
 
@@ -312,6 +340,78 @@ def extrair_mensagens_de_imagem(
                     (destino, message_id, media_id, mime_type, caption)
                 )
 
+    return mensagens_extraidas
+
+
+def extrair_mensagens_de_documento(
+    dados: object,
+) -> list[tuple[str, str, str, str | None, str | None, str | None]]:
+    mensagens_extraidas: list[
+        tuple[str, str, str, str | None, str | None, str | None]
+    ] = []
+    if not isinstance(dados, dict):
+        return mensagens_extraidas
+
+    entries = dados.get("entry")
+    if not isinstance(entries, list):
+        return mensagens_extraidas
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        changes = entry.get("changes")
+        if not isinstance(changes, list):
+            continue
+        for change in changes:
+            if not isinstance(change, dict):
+                continue
+            value = change.get("value")
+            if not isinstance(value, dict):
+                continue
+            metadata = value.get("metadata")
+            numero_proprio = ""
+            if isinstance(metadata, dict):
+                numero_proprio = _somente_digitos(
+                    metadata.get("display_phone_number")
+                )
+            messages = value.get("messages")
+            if not isinstance(messages, list):
+                continue
+            for message in messages:
+                if not isinstance(message, dict):
+                    continue
+                if (
+                    message.get("type") != "document"
+                    or message.get("is_echo") is True
+                ):
+                    continue
+                document = message.get("document")
+                if not isinstance(document, dict):
+                    continue
+                destino = message.get("from")
+                message_id = message.get("id")
+                media_id = document.get("id")
+                if not all(
+                    isinstance(item, str)
+                    for item in (destino, message_id, media_id)
+                ):
+                    continue
+                if not destino or not message_id or not media_id:
+                    continue
+                if numero_proprio and _somente_digitos(destino) == numero_proprio:
+                    continue
+                mime_type = document.get("mime_type")
+                filename = document.get("filename")
+                caption = document.get("caption")
+                mensagens_extraidas.append(
+                    (
+                        destino,
+                        message_id,
+                        media_id,
+                        mime_type if isinstance(mime_type, str) else None,
+                        filename if isinstance(filename, str) else None,
+                        caption if isinstance(caption, str) else None,
+                    )
+                )
     return mensagens_extraidas
 
 

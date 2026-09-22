@@ -300,22 +300,22 @@ def audio_error_response() -> str:
 def image_processing_response(variant: int = 0) -> str:
     responses = (
         "Beleza, vou dar uma olhada nesse comprovante 👀",
-        "Um instante, vou analisar essa imagem.",
+        "Um instante, vou analisar esse comprovante.",
         "Certo, já vou conferir esse comprovante 👀",
     )
     return responses[variant % len(responses)]
 
 
 def image_error_response() -> str:
-    return "Não consegui analisar essa imagem agora. Tenta novamente em alguns instantes."
+    return "Não consegui analisar esse comprovante agora. Tenta novamente em alguns instantes."
 
 
 def image_too_large_response() -> str:
-    return "Essa imagem ficou grande demais. Pode enviar uma versão menor?"
+    return "Esse arquivo ficou grande demais. Pode enviar uma versão menor?"
 
 
 def image_unsupported_response() -> str:
-    return "Consigo analisar comprovantes em JPEG, PNG ou WebP. Pode enviar em um desses formatos?"
+    return "Consigo analisar comprovantes em PDF, JPG, JPEG ou PNG. Pode enviar em um desses formatos?"
 
 
 def receipt_direction_confirmation(amount: Decimal) -> str:
@@ -325,6 +325,35 @@ def receipt_direction_confirmation(amount: Decimal) -> str:
         "Foi um valor que você:\n"
         "1. pagou\n"
         "2. recebeu"
+    )
+
+
+def receipt_identification_confirmation(
+    *,
+    direction: str,
+    amount: Decimal,
+    description: str,
+    transaction_date: date,
+    current_date: date,
+) -> str:
+    direction_label = {
+        "outflow": "Saída",
+        "inflow": "Entrada",
+        "unknown": "Não identificado",
+    }.get(direction, "Não identificado")
+    confirmation = (
+        "Responda *sim* para salvar ou *não* para descartar."
+        if direction in {"outflow", "inflow"}
+        else "Responda *paguei* ou *recebi* para confirmar a direção."
+    )
+    return (
+        "Identifiquei este comprovante:\n\n"
+        f"💰 Valor: {format_brl(amount)}\n"
+        f"📝 Descrição: {_display_text(description)}\n"
+        f"📅 Data: {format_natural_date(transaction_date, current_date)}\n"
+        f"↕️ Tipo: {direction_label}\n"
+        "📂 Categoria: Sem categoria\n\n"
+        f"{confirmation}"
     )
 
 

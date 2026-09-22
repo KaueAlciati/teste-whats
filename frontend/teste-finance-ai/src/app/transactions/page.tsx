@@ -544,8 +544,8 @@ function TransactionSourceBadge({
     import_image: "Extrato importado",
     whatsapp_text: "WhatsApp texto",
     whatsapp_audio: "WhatsApp áudio",
-    whatsapp_image: "WhatsApp imagem",
-    whatsapp_document: "WhatsApp documento",
+    whatsapp_image: "WhatsApp comprovante",
+    whatsapp_document: "WhatsApp comprovante",
   };
   const normalizedSource = source ?? "manual";
   const isImport = normalizedSource.startsWith("import");

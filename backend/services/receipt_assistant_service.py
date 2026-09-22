@@ -14,7 +14,17 @@ from backend.database.connection import SessionLocal, engine
 from backend.models.pending_receipt import PendingReceipt
 from backend.models.user import User
 from backend.schemas.receipt_extraction import ReceiptDirection, ReceiptExtraction
-from backend.services.category_service import find_category_or_default
+from backend.schemas.statement_import import StatementDocumentExtraction
+from backend.services.attachment_service import (
+    AttachmentStorageError,
+    StoredAttachment,
+    delete_stored_file,
+    link_attachment_to_transactions,
+    promote_staged_attachment,
+    stage_attachment_file,
+    validate_attachment,
+)
+from backend.services.category_service import find_existing_category
 from backend.services.conversation_service import (
     image_error_response,
     image_processing_response,
@@ -24,6 +34,7 @@ from backend.services.conversation_service import (
     pending_receipt_discarded_response,
     pending_receipt_expired_response,
     receipt_direction_confirmation,
+    receipt_identification_confirmation,
     receipt_not_registered_response,
     receipt_transaction_confirmation,
     response_variant,
@@ -33,19 +44,22 @@ from backend.services.financial_service import (
     create_transaction,
     get_transaction_by_whatsapp_message_id,
 )
-from backend.services.image_understanding_service import (
-    ImageUnderstandingError,
-    analyze_receipt_image,
-)
 from backend.services.pending_receipt_service import (
     create_pending_receipt,
     delete_pending_receipt,
+    get_pending_receipt_attachment,
     get_latest_pending_receipt_for_user,
     get_pending_receipt_by_message_id,
+    get_pending_receipt_source,
     pending_receipt_is_expired,
+    receipt_extraction_from_pending,
     update_pending_receipt_amount,
 )
-from backend.services.user_service import get_or_create_whatsapp_user
+from backend.services.statement_document_service import (
+    StatementDocumentError,
+    extract_statement_document,
+)
+from backend.services.user_service import authorize_registered_whatsapp_user
 from backend.services.whatsapp_media_service import (
     WhatsAppMediaError,
     WhatsAppMediaTooLargeError,
@@ -57,7 +71,7 @@ from backend.services.whatsapp_service import send_text_message
 
 logger = logging.getLogger("uvicorn.error")
 
-AUTO_REGISTER_CONFIDENCE = 0.90
+AUTO_REGISTER_CONFIDENCE = 0.65
 SUPPORTED_RECEIPT_DOCUMENTS = {
     "pix_receipt",
     "bank_transfer_receipt",
@@ -86,6 +100,64 @@ async def process_financial_image_message(
     mime_type: str | None,
     caption: str | None,
 ) -> None:
+    await _process_financial_receipt_media(
+        whatsapp_phone,
+        whatsapp_message_id,
+        media_id,
+        mime_type,
+        caption,
+        media_kind="image",
+        transaction_source="whatsapp_image",
+        filename=None,
+    )
+
+
+async def process_financial_document_message(
+    whatsapp_phone: str,
+    whatsapp_message_id: str,
+    media_id: str,
+    mime_type: str | None,
+    filename: str | None,
+    caption: str | None,
+) -> None:
+    await _process_financial_receipt_media(
+        whatsapp_phone,
+        whatsapp_message_id,
+        media_id,
+        mime_type,
+        caption,
+        media_kind="document",
+        transaction_source="whatsapp_document",
+        filename=filename,
+    )
+
+
+async def _process_financial_receipt_media(
+    whatsapp_phone: str,
+    whatsapp_message_id: str,
+    media_id: str,
+    mime_type: str | None,
+    caption: str | None,
+    *,
+    media_kind: str,
+    transaction_source: str,
+    filename: str | None,
+) -> None:
+    staged_attachment: StoredAttachment | None = None
+    try:
+        user_id = await asyncio.to_thread(
+            _get_authorized_user_id,
+            whatsapp_phone,
+        )
+    except (SQLAlchemyError, RuntimeError, ValueError) as exc:
+        logger.error(
+            "Falha ao validar usuário do comprovante: tipo=%s",
+            type(exc).__name__,
+        )
+        return
+    if user_id is None:
+        return
+
     try:
         already_handled = await asyncio.to_thread(
             _image_message_already_handled,
@@ -111,22 +183,48 @@ async def process_financial_image_message(
         media = await download_whatsapp_media(
             media_id,
             fallback_mime_type=mime_type,
-            media_kind="image",
+            fallback_filename=filename,
+            media_kind=media_kind,
         )
         logger.info(
-            "Download da imagem concluído: mime_type=%s image_size_bytes=%s",
+            "Download do comprovante concluído: mime_type=%s bytes=%s",
             media.mime_type,
             len(media.content),
         )
-        user_name = await asyncio.to_thread(_get_user_name, whatsapp_phone)
         processing_time = datetime.now(ZoneInfo("America/Sao_Paulo"))
-        extraction = await asyncio.to_thread(
-            analyze_receipt_image,
+        document_extraction = await asyncio.to_thread(
+            extract_statement_document,
             media.content,
             mime_type=media.mime_type,
+            filename=media.filename,
+        )
+        extraction = _receipt_from_statement_extraction(document_extraction)
+        if extraction is None:
+            response = receipt_not_registered_response(
+                document_type="unknown",
+                status="unknown",
+            )
+            await send_text_message(whatsapp_phone, response)
+            return
+        if _validate_receipt_for_confirmation(
+            extraction,
             current_date=processing_time.date(),
-            caption=caption,
-            user_name=user_name,
+        ) is None:
+            response = receipt_not_registered_response(
+                document_type=extraction.document_type,
+                status=extraction.status,
+            )
+            await send_text_message(whatsapp_phone, response)
+            return
+        validated_attachment = validate_attachment(
+            media.content,
+            filename=media.filename,
+            mime_type=media.mime_type,
+        )
+        staged_attachment = await asyncio.to_thread(
+            stage_attachment_file,
+            validated_attachment,
+            user_id=user_id,
         )
         response = await asyncio.to_thread(
             _process_receipt_extraction,
@@ -135,25 +233,35 @@ async def process_financial_image_message(
             extraction,
             processing_time,
             caption,
+            staged_attachment,
+            transaction_source,
         )
+        if response is None and staged_attachment is not None:
+            delete_stored_file(staged_attachment.storage_key)
     except WhatsAppMediaTooLargeError:
         logger.error("Imagem do WhatsApp excedeu o tamanho máximo")
         response = image_too_large_response()
     except WhatsAppMediaUnsupportedTypeError:
         logger.error("Imagem do WhatsApp possui formato não suportado")
         response = image_unsupported_response()
-    except (WhatsAppMediaError, ImageUnderstandingError) as exc:
-        logger.error("Falha ao processar imagem: tipo=%s", type(exc).__name__)
+    except (WhatsAppMediaError, StatementDocumentError, AttachmentStorageError) as exc:
+        if staged_attachment is not None:
+            delete_stored_file(staged_attachment.storage_key)
+        logger.error("Falha ao processar comprovante: tipo=%s", type(exc).__name__)
         response = image_error_response()
     except (SQLAlchemyError, RuntimeError, ValueError, LookupError) as exc:
+        if staged_attachment is not None:
+            delete_stored_file(staged_attachment.storage_key)
         logger.error(
             "Falha ao registrar análise de imagem: tipo=%s",
             type(exc).__name__,
         )
         response = image_error_response()
     except Exception as exc:
+        if staged_attachment is not None:
+            delete_stored_file(staged_attachment.storage_key)
         logger.exception(
-            "Falha inesperada ao processar imagem: tipo=%s",
+            "Falha inesperada ao processar comprovante: tipo=%s",
             type(exc).__name__,
         )
         response = image_error_response()
@@ -204,13 +312,30 @@ def handle_pending_receipt_reply(
             response=pending_receipt_amount_updated_response(corrected_amount),
         )
 
-    extraction = ReceiptExtraction.model_validate(pending.extracted_data)
-    direction: ReceiptDirection = (
-        "outflow" if reply_type == "outflow" else "inflow"
-    )
+    extraction = receipt_extraction_from_pending(pending)
+    if reply_type == "confirm" and extraction.direction == "unknown":
+        amount = _parse_decimal_amount(extraction.amount)
+        if amount is None:
+            return PendingReplyResult(
+                handled=True,
+                response=receipt_not_registered_response(
+                    document_type=extraction.document_type,
+                    status=extraction.status,
+                ),
+            )
+        return PendingReplyResult(
+            handled=True,
+            response=receipt_direction_confirmation(amount),
+        )
+    direction: ReceiptDirection = extraction.direction
+    if reply_type == "outflow":
+        direction = "outflow"
+    elif reply_type == "inflow":
+        direction = "inflow"
     response = _register_validated_receipt(
         db,
         user=user,
+        pending=pending,
         whatsapp_message_id=pending.whatsapp_message_id,
         extraction=extraction,
         current_date=current_date,
@@ -218,12 +343,11 @@ def handle_pending_receipt_reply(
         allow_direction_confirmation=True,
     )
     if response is None:
+        delete_pending_receipt(db, pending=pending, user_id=user.id)
         response = receipt_not_registered_response(
             document_type=extraction.document_type,
             status=extraction.status,
         )
-
-    delete_pending_receipt(db, pending=pending, user_id=user.id)
     return PendingReplyResult(handled=True, response=response)
 
 
@@ -233,63 +357,83 @@ def _process_receipt_extraction(
     extraction: ReceiptExtraction,
     processing_time: datetime,
     caption: str | None = None,
+    attachment: StoredAttachment | None = None,
+    transaction_source: str = "whatsapp_image",
 ) -> str | None:
     if engine is None:
+        if attachment is not None:
+            delete_stored_file(attachment.storage_key)
         raise RuntimeError("Banco de dados indisponível")
 
     with SessionLocal() as db:
-        user = get_or_create_whatsapp_user(db, whatsapp_phone)
+        user = authorize_registered_whatsapp_user(db, whatsapp_phone)
+        if user is None:
+            if attachment is not None:
+                delete_stored_file(attachment.storage_key)
+            return None
         if (
             get_transaction_by_whatsapp_message_id(db, whatsapp_message_id)
             is not None
         ):
+            if attachment is not None:
+                delete_stored_file(attachment.storage_key)
             return None
         if get_pending_receipt_by_message_id(db, whatsapp_message_id) is not None:
+            if attachment is not None:
+                delete_stored_file(attachment.storage_key)
             return None
 
         caption_direction = _direction_from_caption(caption)
         direction_override: ReceiptDirection | None = None
-        allow_caption_confirmation = False
         direction_conflict = False
         if caption_direction in {"outflow", "inflow"}:
             if extraction.direction == "unknown":
                 direction_override = caption_direction
-                allow_caption_confirmation = True
             elif extraction.direction != caption_direction:
                 direction_conflict = True
 
-        response = None
-        if not direction_conflict:
-            response = _register_validated_receipt(
-                db,
-                user=user,
-                whatsapp_message_id=whatsapp_message_id,
-                extraction=extraction,
-                current_date=processing_time.date(),
-                direction_override=direction_override,
-                allow_direction_confirmation=allow_caption_confirmation,
-            )
-        if response is not None:
-            return response
+        if direction_conflict:
+            extraction = extraction.model_copy(update={"direction": "unknown"})
+        elif direction_override is not None:
+            extraction = extraction.model_copy(update={"direction": direction_override})
 
-        pending_amount = _pending_direction_amount(
+        if _validate_receipt_for_confirmation(
             extraction,
-            processing_time.date(),
-            force_confirmation=direction_conflict,
-        )
-        if pending_amount is not None:
-            create_pending_receipt(
-                db,
-                user_id=user.id,
-                whatsapp_message_id=whatsapp_message_id,
-                extraction=extraction,
-                current_time=processing_time,
+            current_date=processing_time.date(),
+        ) is None:
+            if attachment is not None:
+                delete_stored_file(attachment.storage_key)
+            return receipt_not_registered_response(
+                document_type=extraction.document_type,
+                status=extraction.status,
             )
-            return receipt_direction_confirmation(pending_amount)
 
-        return receipt_not_registered_response(
-            document_type=extraction.document_type,
-            status=extraction.status,
+        create_pending_receipt(
+            db,
+            user_id=user.id,
+            whatsapp_message_id=whatsapp_message_id,
+            extraction=extraction,
+            current_time=processing_time,
+            attachment=attachment,
+            transaction_source=transaction_source,
+        )
+        validated = _validate_receipt_for_confirmation(
+            extraction,
+            current_date=processing_time.date(),
+        )
+        assert validated is not None
+        description, _ = _receipt_description_and_counterparty(
+            extraction,
+            transaction_type=(
+                "income" if extraction.direction == "inflow" else "expense"
+            ),
+        )
+        return receipt_identification_confirmation(
+            direction=extraction.direction,
+            amount=validated.amount,
+            description=description,
+            transaction_date=validated.transaction_date,
+            current_date=processing_time.date(),
         )
 
 
@@ -297,6 +441,7 @@ def _register_validated_receipt(
     db: Session,
     *,
     user: User,
+    pending: PendingReceipt,
     whatsapp_message_id: str,
     extraction: ReceiptExtraction,
     current_date: date,
@@ -315,17 +460,26 @@ def _register_validated_receipt(
     transaction_type = (
         "expense" if validated.direction == "outflow" else "income"
     )
-    category = find_category_or_default(
-        db,
-        user_id=user.id,
-        category_name=extraction.category_suggestion,
-        transaction_type=transaction_type,
-    )
+    category = None
+    if extraction.category_suggestion:
+        category = find_existing_category(
+            db,
+            user_id=user.id,
+            category_name=extraction.category_suggestion,
+            transaction_type=transaction_type,
+        )
     description, counterparty = _receipt_description_and_counterparty(
         extraction,
         transaction_type=transaction_type,
     )
 
+    staged_attachment = get_pending_receipt_attachment(pending)
+    if staged_attachment is None:
+        return None
+    stored_attachment = promote_staged_attachment(
+        staged_attachment,
+        user_id=user.id,
+    )
     try:
         transaction = create_transaction(
             db,
@@ -333,20 +487,37 @@ def _register_validated_receipt(
             type=transaction_type,
             amount=validated.amount,
             description=description,
-            category_id=category.id,
+            category_id=category.id if category is not None else None,
             transaction_date=validated.transaction_date,
             payment_method=_receipt_payment_method(extraction.document_type),
-            source="whatsapp_image",
+            source=get_pending_receipt_source(pending),
             whatsapp_message_id=whatsapp_message_id,
+            commit=False,
         )
+        link_attachment_to_transactions(
+            db,
+            user_id=user.id,
+            transactions=[transaction],
+            stored=stored_attachment,
+        )
+        db.delete(pending)
+        db.commit()
     except DuplicateWhatsAppMessageError:
+        db.rollback()
+        delete_stored_file(stored_attachment.storage_key)
         return None
+    except Exception:
+        db.rollback()
+        delete_stored_file(stored_attachment.storage_key)
+        raise
+
+    delete_stored_file(staged_attachment.storage_key)
 
     return receipt_transaction_confirmation(
         transaction_type=transaction_type,
         amount=transaction.amount,
         description=transaction.description,
-        category=category.name,
+        category=category.name if category is not None else "Sem categoria",
         transaction_date=transaction.transaction_date,
         current_date=current_date,
         counterparty=counterparty,
@@ -360,6 +531,30 @@ def _validate_receipt_for_registration(
     direction_override: ReceiptDirection | None = None,
     allow_direction_confirmation: bool = False,
 ) -> ValidatedReceipt | None:
+    validated = _validate_receipt_for_confirmation(
+        extraction,
+        current_date=current_date,
+    )
+    if validated is None:
+        return None
+
+    direction = direction_override or extraction.direction
+    if direction not in {"outflow", "inflow"}:
+        return None
+    if extraction.requires_confirmation and not allow_direction_confirmation:
+        return None
+    return ValidatedReceipt(
+        amount=validated.amount,
+        transaction_date=validated.transaction_date,
+        direction=direction,
+    )
+
+
+def _validate_receipt_for_confirmation(
+    extraction: ReceiptExtraction,
+    *,
+    current_date: date,
+) -> ValidatedReceipt | None:
     if extraction.document_type not in SUPPORTED_RECEIPT_DOCUMENTS:
         return None
     if extraction.status != "completed":
@@ -369,11 +564,6 @@ def _validate_receipt_for_registration(
     if extraction.confidence < AUTO_REGISTER_CONFIDENCE:
         return None
 
-    direction = direction_override or extraction.direction
-    if direction not in {"outflow", "inflow"}:
-        return None
-    if extraction.requires_confirmation and not allow_direction_confirmation:
-        return None
     amount = _parse_decimal_amount(extraction.amount)
     transaction_date = _parse_receipt_date(
         extraction.transaction_date,
@@ -381,29 +571,14 @@ def _validate_receipt_for_registration(
     )
     if amount is None or transaction_date is None:
         return None
+    if not _safe_receipt_text(extraction.description, max_length=255):
+        return None
 
     return ValidatedReceipt(
         amount=amount,
         transaction_date=transaction_date,
-        direction=direction,
+        direction=extraction.direction,
     )
-
-
-def _pending_direction_amount(
-    extraction: ReceiptExtraction,
-    current_date: date,
-    *,
-    force_confirmation: bool = False,
-) -> Decimal | None:
-    if extraction.direction != "unknown" and not force_confirmation:
-        return None
-    validated = _validate_receipt_for_registration(
-        extraction,
-        current_date=current_date,
-        direction_override="outflow",
-        allow_direction_confirmation=True,
-    )
-    return validated.amount if validated is not None else None
 
 
 def _direction_from_caption(caption: str | None) -> ReceiptDirection:
@@ -440,7 +615,7 @@ def _parse_decimal_amount(value: str | None) -> Decimal | None:
 
 def _parse_receipt_date(value: str | None, *, current_date: date) -> date | None:
     if value is None:
-        return current_date
+        return None
     try:
         parsed = date.fromisoformat(value)
     except ValueError:
@@ -491,6 +666,8 @@ def _receipt_payment_method(document_type: str) -> str | None:
 
 def _classify_pending_reply(text: str) -> tuple[str | None, Decimal | None]:
     normalized = _normalize_text(text)
+    if normalized in {"sim", "isso", "isso mesmo", "correto", "confirmo"}:
+        return "confirm", None
     if normalized in {"paguei", "foi gasto", "saida", "eu paguei"}:
         return "outflow", None
     if normalized in {"recebi", "foi entrada", "entrou", "me pagaram"}:
@@ -535,8 +712,39 @@ def _image_message_already_handled(whatsapp_message_id: str) -> bool:
         )
 
 
-def _get_user_name(whatsapp_phone: str) -> str | None:
+def _get_authorized_user_id(whatsapp_phone: str) -> int | None:
     if engine is None:
         raise RuntimeError("Banco de dados indisponível")
     with SessionLocal() as db:
-        return get_or_create_whatsapp_user(db, whatsapp_phone).name
+        user = authorize_registered_whatsapp_user(db, whatsapp_phone)
+        return user.id if user is not None else None
+
+
+def _receipt_from_statement_extraction(
+    extraction: StatementDocumentExtraction,
+) -> ReceiptExtraction | None:
+    if extraction.document_type != "single_receipt":
+        return None
+    if len(extraction.movements) != 1:
+        return None
+    movement = extraction.movements[0]
+    return ReceiptExtraction(
+        document_type="payment_receipt",
+        amount=movement.amount,
+        currency="BRL" if movement.amount else None,
+        transaction_date=movement.transaction_date,
+        transaction_time=None,
+        payer_name=None,
+        payer_institution=None,
+        recipient_name=None,
+        recipient_institution=None,
+        pix_key=None,
+        end_to_end_id=None,
+        description=movement.description,
+        direction=movement.direction,
+        category_suggestion=None,
+        status="completed",
+        confidence=movement.confidence,
+        requires_confirmation=True,
+        reason=movement.reason,
+    )
