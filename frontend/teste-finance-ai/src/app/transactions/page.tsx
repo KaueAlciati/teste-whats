@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowUpCircle, ArrowDownCircle, Search, Trash2, Pencil, Download, UploadCloud, SlidersHorizontal, X, ChevronDown } from "lucide-react";
+import { ArrowUpCircle, ArrowDownCircle, Search, Trash2, Pencil, Download, UploadCloud, SlidersHorizontal, X, ChevronDown, FileSearch } from "lucide-react";
 import { storage } from "@/lib/storage";
 import { api, HttpError, type Transaction } from "@/lib/api";
 import { AppLayout } from "@/components/AppLayout";
@@ -25,6 +25,7 @@ export default function TransactionsPage() {
   const [dateTo, setDateTo] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [viewingAttachmentId, setViewingAttachmentId] = useState<number | null>(null);
   const [exportingFormat, setExportingFormat] = useState<ExportFormat | null>(null);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -149,6 +150,32 @@ export default function TransactionsPage() {
       await handleFetchError(err, "Erro ao excluir transação:");
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function handleViewAttachment(transaction: Transaction) {
+    if (!transaction.id) return;
+    const viewer = window.open("", "_blank");
+    if (viewer) viewer.opener = null;
+    setViewingAttachmentId(transaction.id);
+    try {
+      const blob = await api.getTransactionAttachment(transaction.id);
+      const url = URL.createObjectURL(blob);
+      if (viewer) {
+        viewer.location.href = url;
+      } else {
+        const link = document.createElement("a");
+        link.href = url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.click();
+      }
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (error) {
+      viewer?.close();
+      await handleFetchError(error, "Erro ao abrir comprovante:");
+    } finally {
+      setViewingAttachmentId(null);
     }
   }
 
@@ -336,6 +363,16 @@ export default function TransactionsPage() {
                         {t.category}
                       </span>
                       <TransactionSourceBadge source={t.source} mobile />
+                      {t.has_attachment && (
+                        <button
+                          onClick={() => void handleViewAttachment(t)}
+                          disabled={viewingAttachmentId === t.id}
+                          className="mt-2 flex items-center gap-1.5 text-xs font-medium text-sky-400 hover:text-sky-300 disabled:opacity-50"
+                        >
+                          <FileSearch size={13} />
+                          {viewingAttachmentId === t.id ? "Abrindo..." : "Mostrar comprovante"}
+                        </button>
+                      )}
                     </div>
                   </div>
                   <p
@@ -379,7 +416,7 @@ export default function TransactionsPage() {
               próprio (não na página inteira) para telas médias apertadas. */}
           <div className="hidden sm:block bg-zinc-900/50 border border-zinc-800 rounded-2xl overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[620px] text-left border-collapse">
+              <table className="w-full min-w-[760px] text-left border-collapse">
                 <thead>
                   <tr className="border-b border-zinc-800 bg-zinc-950/50 text-zinc-500 text-xs uppercase font-bold">
                     <th className="p-4">Descrição</th>
@@ -425,6 +462,16 @@ export default function TransactionsPage() {
                       </td>
                       <td className="p-4 text-right">
                         <div className="flex items-center justify-end gap-3">
+                          {t.has_attachment && (
+                            <button
+                              onClick={() => void handleViewAttachment(t)}
+                              disabled={viewingAttachmentId === t.id}
+                              className="flex items-center gap-1.5 whitespace-nowrap text-xs font-medium text-sky-400 hover:text-sky-300 disabled:opacity-50"
+                            >
+                              <FileSearch size={14} />
+                              {viewingAttachmentId === t.id ? "Abrindo..." : "Mostrar comprovante"}
+                            </button>
+                          )}
                           <button
                             onClick={() => window.dispatchEvent(new CustomEvent("open-transaction-modal", { detail: t }))}
                             aria-label={`Editar transação ${t.description}`}

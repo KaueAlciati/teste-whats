@@ -15,6 +15,7 @@ from backend.models import (  # noqa: F401
     GoalContribution,
     PendingAudioConfirmation,
     PendingReceipt,
+    TransactionAttachment,
     User,
 )
 

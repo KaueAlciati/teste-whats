@@ -6,6 +6,7 @@ from backend.models.goal_context import GoalContext
 from backend.models.goal_contribution import GoalContribution
 from backend.models.pending_audio_confirmation import PendingAudioConfirmation
 from backend.models.pending_receipt import PendingReceipt
+from backend.models.transaction_attachment import TransactionAttachment
 from backend.models.user import User
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "GoalContribution",
     "PendingAudioConfirmation",
     "PendingReceipt",
+    "TransactionAttachment",
     "User",
 ]

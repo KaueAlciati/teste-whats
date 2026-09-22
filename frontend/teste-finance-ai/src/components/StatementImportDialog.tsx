@@ -121,7 +121,11 @@ export function StatementImportDialog({ open, onClose, onImported }: Props) {
 
     setConfirming(true);
     try {
-      const response = await api.confirmImport(rows, preview.source);
+      const response = await api.confirmImport(
+        rows,
+        preview.source,
+        preview.source === "csv" ? undefined : file ?? undefined,
+      );
       setResult({
         imported: response.imported,
         skipped: response.skipped_duplicates ?? response.skipped ?? 0,

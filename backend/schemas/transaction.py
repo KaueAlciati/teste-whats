@@ -22,3 +22,4 @@ class TransactionResponse(BaseModel):
     category: str
     date: date
     source: str
+    has_attachment: bool = False

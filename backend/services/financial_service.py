@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from backend.models.category import Category
 from backend.models.financial_transaction import FinancialTransaction
+from backend.services.attachment_service import delete_stored_file_if_unreferenced
 
 
 TRANSACTION_TYPES = {"expense", "income"}
@@ -51,6 +52,7 @@ def create_transaction(
     payment_method: str | None = None,
     whatsapp_message_id: str | None = None,
     notes: str | None = None,
+    commit: bool = True,
 ) -> FinancialTransaction:
     if type not in TRANSACTION_TYPES:
         raise ValueError("Tipo de movimentação inválido")
@@ -83,8 +85,11 @@ def create_transaction(
     db.add(transaction)
 
     try:
-        db.commit()
-        db.refresh(transaction)
+        if commit:
+            db.commit()
+            db.refresh(transaction)
+        else:
+            db.flush()
         return transaction
     except IntegrityError as exc:
         db.rollback()
@@ -221,9 +226,14 @@ def delete_transaction(
     if transaction.user_id != user_id:
         raise PermissionError("Movimentação pertence a outro usuário")
 
+    storage_keys = {
+        attachment.storage_key for attachment in transaction.attachments
+    }
     try:
         db.delete(transaction)
         db.commit()
+        for storage_key in storage_keys:
+            delete_stored_file_if_unreferenced(db, storage_key)
     except SQLAlchemyError:
         db.rollback()
         raise

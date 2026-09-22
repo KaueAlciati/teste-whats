@@ -35,6 +35,7 @@ export type Transaction = {
   type: "income" | "expense";
   category: string;
   date: string;
+  has_attachment?: boolean;
   source?:
     | "manual"
     | "import"
@@ -652,6 +653,13 @@ export const api = {
     });
   },
 
+  getTransactionAttachment: async (id: number): Promise<Blob> => {
+    const response = await fetchFileWithTimeout(
+      `${API_URL}/transactions/${id}/attachment`,
+    );
+    return response.blob;
+  },
+
   exportTransactions: async (options: {
     format?: "xlsx" | "csv";
     startDate?: string;
@@ -901,12 +909,21 @@ export const api = {
   confirmImport: async (
     rows: ImportConfirmRow[],
     source: ImportSourceFormat = "csv",
+    attachmentFile?: File,
   ): Promise<ImportConfirmResponse> => {
+    const attachment = attachmentFile
+      ? {
+          filename: attachmentFile.name,
+          content_base64: await fileToBase64(attachmentFile),
+          mime_type: attachmentFile.type || undefined,
+        }
+      : undefined;
     return await fetchWithTimeout(`${API_URL}/transactions/import/confirm`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         source,
+        attachment,
         rows: rows.map((row) => ({
           date: row.date,
           amount: row.amount,

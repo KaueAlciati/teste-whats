@@ -75,7 +75,13 @@ class FinancialTransaction(Base):
     category: Mapped["Category | None"] = relationship(
         back_populates="transactions"
     )
+    attachments: Mapped[list["TransactionAttachment"]] = relationship(
+        back_populates="transaction",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
 
 
 from backend.models.category import Category  # noqa: E402
+from backend.models.transaction_attachment import TransactionAttachment  # noqa: E402
 from backend.models.user import User  # noqa: E402

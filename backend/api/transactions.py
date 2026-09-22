@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from typing import Literal
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -17,6 +18,11 @@ from backend.schemas.statement_import import (
 )
 from backend.schemas.transaction import TransactionResponse, TransactionWrite
 from backend.services.category_service import get_or_create_user_category
+from backend.services.attachment_service import (
+    AttachmentStorageError,
+    get_transaction_attachment,
+    read_attachment_file,
+)
 from backend.services.financial_service import (
     create_transaction,
     delete_transaction,
@@ -139,6 +145,7 @@ def confirm_import(
             user_id=current_user.id,
             rows=payload.rows,
             source_format=payload.source,
+            attachment=payload.attachment,
         )
         return ImportConfirmResponse(
             imported=imported,
@@ -149,6 +156,48 @@ def confirm_import(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from None
+    except AttachmentStorageError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from None
+
+
+@router.get("/{transaction_id}/attachment")
+def view_transaction_attachment(
+    transaction_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    attachment = get_transaction_attachment(
+        db,
+        user_id=current_user.id,
+        transaction_id=transaction_id,
+    )
+    if attachment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Comprovante não encontrado",
+        )
+    try:
+        content = read_attachment_file(attachment)
+    except AttachmentStorageError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from None
+
+    encoded_filename = quote(attachment.original_filename, safe="")
+    return Response(
+        content=content,
+        media_type=attachment.mime_type,
+        headers={
+            "Content-Disposition": (
+                f"inline; filename*=UTF-8''{encoded_filename}"
+            ),
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.post(
@@ -263,4 +312,5 @@ def _transaction_response(
         ),
         date=transaction.transaction_date,
         source=transaction.source,
+        has_attachment=bool(transaction.attachments),
     )

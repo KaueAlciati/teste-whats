@@ -59,6 +59,10 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    transaction_attachments: Mapped[list["TransactionAttachment"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
     goals: Mapped[list["Goal"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
@@ -79,3 +83,4 @@ from backend.models.financial_transaction import FinancialTransaction  # noqa: E
 from backend.models.financial_profile import FinancialProfile  # noqa: E402
 from backend.models.goal import Goal  # noqa: E402
 from backend.models.goal_contribution import GoalContribution  # noqa: E402
+from backend.models.transaction_attachment import TransactionAttachment  # noqa: E402

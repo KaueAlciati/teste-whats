@@ -85,11 +85,28 @@ class ImportConfirmRow(BaseModel):
     allow_duplicate: bool = False
 
 
+class ImportAttachmentUpload(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    filename: str = Field(min_length=1, max_length=255)
+    content_base64: str = Field(min_length=1, max_length=14 * 1024 * 1024)
+    mime_type: str | None = Field(default=None, max_length=100)
+
+
 class ImportConfirmRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     rows: list[ImportConfirmRow] = Field(min_length=1, max_length=5000)
     source: Literal["csv", "pdf", "image"] = "csv"
+    attachment: ImportAttachmentUpload | None = None
+
+    @model_validator(mode="after")
+    def validate_attachment_for_source(self) -> "ImportConfirmRequest":
+        if self.source == "csv" and self.attachment is not None:
+            raise ValueError("CSV não aceita comprovante anexado")
+        if self.source in {"pdf", "image"} and self.attachment is None:
+            raise ValueError("O arquivo original é obrigatório na confirmação")
+        return self
 
 
 class ImportConfirmResponse(BaseModel):

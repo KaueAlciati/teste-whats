@@ -13,12 +13,21 @@ from sqlalchemy.orm import Session
 
 from backend.models.financial_transaction import FinancialTransaction
 from backend.schemas.statement_import import (
+    ImportAttachmentUpload,
     ImportColumnMapping,
     ImportConfirmRow,
     ImportPreviewResponse,
     ImportPreviewRow,
     StatementDocumentExtraction,
     StatementExtractedMovement,
+)
+from backend.services.attachment_service import (
+    AttachmentStorageError,
+    ValidatedAttachment,
+    delete_stored_file,
+    link_attachment_to_transactions,
+    store_attachment_file,
+    validate_attachment,
 )
 from backend.services.category_service import get_or_create_user_category
 from backend.services.financial_service import create_transaction
@@ -242,14 +251,19 @@ def confirm_statement_import(
     user_id: int,
     rows: list[ImportConfirmRow],
     source_format: str,
+    attachment: ImportAttachmentUpload | None = None,
 ) -> tuple[int, int]:
     transaction_source = IMPORT_SOURCE_BY_FORMAT.get(source_format)
     if transaction_source is None:
         raise StatementImportError("Origem de importação inválida")
+    validated_attachment = _validate_confirm_attachment(
+        source_format=source_format,
+        attachment=attachment,
+    )
     existing_fingerprints = _existing_fingerprints(db, user_id=user_id)
     imported_fingerprints: set[tuple[date, Decimal, str, str]] = set()
-    imported = 0
     skipped_duplicates = 0
+    planned_rows: list[tuple[ImportConfirmRow, int | None]] = []
 
     for row in rows:
         fingerprint = transaction_fingerprint(
@@ -275,20 +289,49 @@ def confirm_statement_import(
                 transaction_type=row.type,
             )
             category_id = category.id
-        create_transaction(
-            db,
-            user_id=user_id,
-            type=row.type,
-            amount=Decimal(str(row.amount)),
-            description=row.description,
-            category_id=category_id,
-            transaction_date=row.date,
-            source=transaction_source,
-        )
+        planned_rows.append((row, category_id))
         imported_fingerprints.add(fingerprint)
-        imported += 1
 
-    return imported, skipped_duplicates
+    if not planned_rows:
+        return 0, skipped_duplicates
+
+    stored_attachment = None
+    if validated_attachment is not None:
+        stored_attachment = store_attachment_file(
+            validated_attachment,
+            user_id=user_id,
+        )
+
+    try:
+        transactions = [
+            create_transaction(
+                db,
+                user_id=user_id,
+                type=row.type,
+                amount=Decimal(str(row.amount)),
+                description=row.description,
+                category_id=category_id,
+                transaction_date=row.date,
+                source=transaction_source,
+                commit=False,
+            )
+            for row, category_id in planned_rows
+        ]
+        if stored_attachment is not None:
+            link_attachment_to_transactions(
+                db,
+                user_id=user_id,
+                transactions=transactions,
+                stored=stored_attachment,
+            )
+        db.commit()
+    except Exception:
+        db.rollback()
+        if stored_attachment is not None:
+            delete_stored_file(stored_attachment.storage_key)
+        raise
+
+    return len(transactions), skipped_duplicates
 
 
 def confirm_csv_import(
@@ -303,6 +346,41 @@ def confirm_csv_import(
         rows=rows,
         source_format="csv",
     )
+
+
+def _validate_confirm_attachment(
+    *,
+    source_format: str,
+    attachment: ImportAttachmentUpload | None,
+) -> ValidatedAttachment | None:
+    if source_format == "csv":
+        if attachment is not None:
+            raise StatementImportError("CSV não aceita comprovante anexado")
+        return None
+    if attachment is None:
+        raise StatementImportError(
+            "O arquivo original é obrigatório na confirmação"
+        )
+
+    file_bytes = _decode_binary_content(attachment.content_base64)
+    try:
+        validated = validate_attachment(
+            file_bytes,
+            filename=attachment.filename,
+            mime_type=attachment.mime_type,
+        )
+    except AttachmentStorageError as exc:
+        raise StatementImportError(str(exc)) from exc
+
+    if source_format == "pdf" and validated.extension != ".pdf":
+        raise StatementImportError("A origem PDF exige um arquivo PDF")
+    if source_format == "image" and validated.extension not in {
+        ".jpg",
+        ".jpeg",
+        ".png",
+    }:
+        raise StatementImportError("A origem imagem exige JPG, JPEG ou PNG")
+    return validated
 
 
 def _normalize_extracted_movements(

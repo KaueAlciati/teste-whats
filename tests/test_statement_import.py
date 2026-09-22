@@ -1,6 +1,8 @@
 import base64
 import os
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -11,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 from backend.database.base import Base
 from backend.database.connection import get_db
 from backend.main import app
-from backend.models import FinancialTransaction, User
+from backend.models import FinancialTransaction, TransactionAttachment, User
 from backend.services.auth_service import create_access_token
 from backend.schemas.statement_import import (
     StatementDocumentExtraction,
@@ -21,6 +23,7 @@ from backend.schemas.statement_import import (
 
 class StatementImportApiTestCase(unittest.TestCase):
     def setUp(self) -> None:
+        self.attachment_storage = TemporaryDirectory()
         self.engine = create_engine(
             "sqlite+pysqlite:///:memory:",
             connect_args={"check_same_thread": False},
@@ -42,7 +45,8 @@ class StatementImportApiTestCase(unittest.TestCase):
             {
                 "JWT_SECRET_KEY": (
                     "test-secret-with-at-least-thirty-two-characters"
-                )
+                ),
+                "ATTACHMENT_STORAGE_DIR": self.attachment_storage.name,
             },
         )
         self.environment.start()
@@ -67,6 +71,7 @@ class StatementImportApiTestCase(unittest.TestCase):
         self.environment.stop()
         Base.metadata.drop_all(self.engine)
         self.engine.dispose()
+        self.attachment_storage.cleanup()
 
     def test_preview_detects_comma_csv_brazilian_values_and_dates(self) -> None:
         response = self._preview(
@@ -145,6 +150,7 @@ class StatementImportApiTestCase(unittest.TestCase):
         with self.session_factory() as db:
             count = db.scalar(select(func.count(FinancialTransaction.id)))
         self.assertEqual(count, 0)
+        self.assertEqual(list(Path(self.attachment_storage.name).rglob("*")), [])
 
     def test_confirmation_saves_selected_rows_with_import_source(self) -> None:
         row = self._preview(self._valid_csv()).json()["rows"][0]
@@ -230,6 +236,31 @@ class StatementImportApiTestCase(unittest.TestCase):
                 db.scalar(select(func.count(FinancialTransaction.id))),
                 0,
             )
+            self.assertEqual(
+                db.scalar(select(func.count(TransactionAttachment.id))),
+                0,
+            )
+        self.assertEqual(list(Path(self.attachment_storage.name).rglob("*")), [])
+
+    def test_document_confirmation_requires_original_file(self) -> None:
+        row = {
+            "date": "2026-09-22",
+            "description": "Pagamento",
+            "amount": 30.0,
+            "type": "expense",
+            "category": None,
+        }
+
+        response = self.client.post(
+            "/api/transactions/import/confirm",
+            json={"source": "image", "rows": [self._confirm_row(row)]},
+            headers=self._headers(self.token),
+        )
+
+        self.assertEqual(response.status_code, 422)
+        with self.session_factory() as db:
+            self.assertEqual(db.scalar(select(func.count(FinancialTransaction.id))), 0)
+            self.assertEqual(db.scalar(select(func.count(TransactionAttachment.id))), 0)
 
     def test_pdf_statement_confirmation_uses_pdf_source(self) -> None:
         extraction = self._document_extraction()
@@ -253,6 +284,30 @@ class StatementImportApiTestCase(unittest.TestCase):
         with self.session_factory() as db:
             transaction = db.scalar(select(FinancialTransaction))
             self.assertEqual(transaction.source, "import_pdf")
+            attachment = db.scalar(select(TransactionAttachment))
+            self.assertEqual(attachment.transaction_id, transaction.id)
+            self.assertEqual(attachment.user_id, self.user.id)
+            self.assertEqual(attachment.mime_type, "application/pdf")
+            stored_path = Path(self.attachment_storage.name) / attachment.storage_key
+            self.assertEqual(stored_path.read_bytes(), b"%PDF-1.7 safe-pdf")
+
+        listed = self.client.get(
+            "/api/transactions",
+            headers=self._headers(self.token),
+        )
+        self.assertTrue(listed.json()[0]["has_attachment"])
+        viewed = self.client.get(
+            f"/api/transactions/{transaction.id}/attachment",
+            headers=self._headers(self.token),
+        )
+        self.assertEqual(viewed.status_code, 200)
+        self.assertEqual(viewed.content, b"%PDF-1.7 safe-pdf")
+        self.assertEqual(viewed.headers["content-type"], "application/pdf")
+        forbidden = self.client.get(
+            f"/api/transactions/{transaction.id}/attachment",
+            headers=self._headers(self.other_token),
+        )
+        self.assertEqual(forbidden.status_code, 404)
 
         with patch(
             "backend.services.statement_import_service.extract_statement_document",
@@ -267,6 +322,72 @@ class StatementImportApiTestCase(unittest.TestCase):
             duplicate_preview.json()["rows"][0]["status"],
             "possible_duplicate",
         )
+
+    def test_one_document_is_stored_once_and_linked_to_all_imported_rows(self) -> None:
+        extraction = self._document_extraction()
+        with patch(
+            "backend.services.statement_import_service.extract_statement_document",
+            return_value=extraction,
+        ):
+            preview = self._preview_binary(
+                "extrato.png",
+                b"\x89PNG\r\n\x1a\nsafe-image",
+                "image/png",
+            ).json()
+
+        response = self.client.post(
+            "/api/transactions/import/confirm",
+            json={
+                "source": "image",
+                "attachment": self._attachment_payload("image"),
+                "rows": [self._confirm_row(row) for row in preview["rows"]],
+            },
+            headers=self._headers(self.token),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["imported"], 2)
+        with self.session_factory() as db:
+            attachments = list(
+                db.scalars(select(TransactionAttachment).order_by(TransactionAttachment.id))
+            )
+            self.assertEqual(len(attachments), 2)
+            self.assertEqual(len({item.storage_key for item in attachments}), 1)
+            self.assertEqual({item.user_id for item in attachments}, {self.user.id})
+        stored_files = [
+            path for path in Path(self.attachment_storage.name).rglob("*")
+            if path.is_file()
+        ]
+        self.assertEqual(len(stored_files), 1)
+
+    def test_deleting_last_link_removes_stored_file(self) -> None:
+        extraction = self._receipt_extraction(direction="outflow")
+        with patch(
+            "backend.services.statement_import_service.extract_statement_document",
+            return_value=extraction,
+        ):
+            row = self._preview_binary(
+                "comprovante.png",
+                b"\x89PNG\r\n\x1a\nsafe-image",
+                "image/png",
+            ).json()["rows"][0]
+        self.assertEqual(
+            self._confirm(self.token, row, source="image").status_code,
+            200,
+        )
+        with self.session_factory() as db:
+            transaction = db.scalar(select(FinancialTransaction))
+            attachment = db.scalar(select(TransactionAttachment))
+            stored_path = Path(self.attachment_storage.name) / attachment.storage_key
+            self.assertTrue(stored_path.exists())
+
+        deleted = self.client.delete(
+            f"/api/transactions/{transaction.id}",
+            headers=self._headers(self.token),
+        )
+
+        self.assertEqual(deleted.status_code, 200)
+        self.assertFalse(stored_path.exists())
 
     def test_individual_sent_receipt_creates_one_expense_preview_for_all_formats(self) -> None:
         extraction = StatementDocumentExtraction(
@@ -425,23 +546,57 @@ class StatementImportApiTestCase(unittest.TestCase):
         transaction_type: str | None = None,
         category: str | None = None,
     ):
+        payload = {
+            "source": source,
+            "rows": [
+                self._confirm_row(
+                    row,
+                    allow_duplicate=allow_duplicate,
+                    transaction_type=transaction_type,
+                    category=category,
+                )
+            ],
+        }
+        if source != "csv":
+            payload["attachment"] = self._attachment_payload(source)
         return self.client.post(
             "/api/transactions/import/confirm",
-            json={
-                "source": source,
-                "rows": [
-                    {
-                        "date": row["date"],
-                        "description": row["description"],
-                        "amount": row["amount"],
-                        "type": transaction_type or row["type"],
-                        "category": category or row["category"],
-                        "allow_duplicate": allow_duplicate,
-                    }
-                ]
-            },
+            json=payload,
             headers=self._headers(token),
         )
+
+    @staticmethod
+    def _confirm_row(
+        row: dict,
+        *,
+        allow_duplicate: bool = False,
+        transaction_type: str | None = None,
+        category: str | None = None,
+    ) -> dict:
+        return {
+            "date": row["date"],
+            "description": row["description"],
+            "amount": row["amount"],
+            "type": transaction_type or row["type"],
+            "category": category or row["category"],
+            "allow_duplicate": allow_duplicate,
+        }
+
+    @staticmethod
+    def _attachment_payload(source: str) -> dict:
+        if source == "pdf":
+            filename = "extrato.pdf"
+            content = b"%PDF-1.7 safe-pdf"
+            mime_type = "application/pdf"
+        else:
+            filename = "comprovante.png"
+            content = b"\x89PNG\r\n\x1a\nsafe-image"
+            mime_type = "image/png"
+        return {
+            "filename": filename,
+            "content_base64": base64.b64encode(content).decode("ascii"),
+            "mime_type": mime_type,
+        }
 
     def _preview_binary(
         self,
