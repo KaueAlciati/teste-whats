@@ -14,6 +14,7 @@ from backend.services.statement_document_service import (
     StatementDocumentError,
     _analyze_statement_content,
     _extract_pdf_text_chunks,
+    _merge_extractions,
     _render_pdf_pages,
     extract_statement_document,
 )
@@ -133,7 +134,16 @@ class StatementDocumentServiceTestCase(unittest.TestCase):
     def test_single_receipt_classification_is_preserved(self) -> None:
         extraction = StatementDocumentExtraction(
             document_type="single_receipt",
-            movements=[],
+            movements=[
+                StatementExtractedMovement(
+                    transaction_date="2026-09-22",
+                    description="PIX enviado",
+                    amount="42.00",
+                    direction="outflow",
+                    confidence=0.99,
+                    reason=None,
+                )
+            ],
             reason="Comprovante PIX",
         )
         client = Mock()
@@ -149,7 +159,31 @@ class StatementDocumentServiceTestCase(unittest.TestCase):
                     filename="pix.png",
                 )
         self.assertEqual(result.document_type, "single_receipt")
-        self.assertEqual(result.movements, [])
+        self.assertEqual(len(result.movements), 1)
+        prompt = client.chat.completions.create.call_args.kwargs["messages"][0]["content"]
+        self.assertIn("exatamente uma movement", prompt[0]["text"])
+        self.assertIn("use unknown", prompt[0]["text"])
+
+    def test_merge_keeps_single_receipt_with_its_movement(self) -> None:
+        extraction = StatementDocumentExtraction(
+            document_type="single_receipt",
+            movements=[
+                StatementExtractedMovement(
+                    transaction_date="2026-09-22",
+                    description="Pagamento",
+                    amount="30.00",
+                    direction="outflow",
+                    confidence=0.95,
+                    reason=None,
+                )
+            ],
+            reason=None,
+        )
+
+        result = _merge_extractions([extraction])
+
+        self.assertEqual(result.document_type, "single_receipt")
+        self.assertEqual(len(result.movements), 1)
 
     def test_missing_api_key_fails_without_external_call(self) -> None:
         with patch.dict(os.environ, {}, clear=True):

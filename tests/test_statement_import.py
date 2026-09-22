@@ -268,24 +268,95 @@ class StatementImportApiTestCase(unittest.TestCase):
             "possible_duplicate",
         )
 
-    def test_individual_receipt_is_not_accepted_as_statement(self) -> None:
+    def test_individual_sent_receipt_creates_one_expense_preview_for_all_formats(self) -> None:
         extraction = StatementDocumentExtraction(
             document_type="single_receipt",
-            movements=[],
+            movements=[
+                StatementExtractedMovement(
+                    transaction_date="2026-09-22",
+                    description="PIX enviado para Loja Exemplo",
+                    amount="89.90",
+                    direction="outflow",
+                    confidence=0.98,
+                    reason=None,
+                )
+            ],
             reason="Comprovante PIX individual",
+        )
+        files = (
+            ("comprovante.pdf", b"%PDF-1.7 safe-pdf", "application/pdf"),
+            ("comprovante.jpg", b"\xff\xd8\xffsafe-image", "image/jpeg"),
+            ("comprovante.jpeg", b"\xff\xd8\xffsafe-image", "image/jpeg"),
+            ("comprovante.png", b"\x89PNG\r\n\x1a\nsafe-image", "image/png"),
         )
         with patch(
             "backend.services.statement_import_service.extract_statement_document",
             return_value=extraction,
         ):
+            for filename, content, mime_type in files:
+                with self.subTest(filename=filename):
+                    response = self._preview_binary(filename, content, mime_type)
+                    self.assertEqual(response.status_code, 200)
+                    body = response.json()
+                    self.assertEqual(body["total"], 1)
+                    self.assertEqual(body["rows"][0]["type"], "expense")
+                    self.assertEqual(body["rows"][0]["amount"], 89.9)
+                    self.assertIsNone(body["rows"][0]["category"])
+
+        with self.session_factory() as db:
+            self.assertEqual(db.scalar(select(func.count(FinancialTransaction.id))), 0)
+
+    def test_individual_received_receipt_creates_income_preview(self) -> None:
+        extraction = self._receipt_extraction(direction="inflow")
+        with patch(
+            "backend.services.statement_import_service.extract_statement_document",
+            return_value=extraction,
+        ):
             response = self._preview_binary(
-                "comprovante.png",
+                "recebimento.png",
                 b"\x89PNG\r\n\x1a\nsafe-image",
                 "image/png",
             )
 
-        self.assertEqual(response.status_code, 422)
-        self.assertIn("comprovante individual", response.json()["detail"])
+        self.assertEqual(response.status_code, 200)
+        row = response.json()["rows"][0]
+        self.assertEqual(row["type"], "income")
+        self.assertEqual(row["status"], "ready")
+        self.assertIsNone(row["category"])
+
+    def test_unknown_receipt_direction_can_be_chosen_before_confirmation(self) -> None:
+        extraction = self._receipt_extraction(direction="unknown")
+        with patch(
+            "backend.services.statement_import_service.extract_statement_document",
+            return_value=extraction,
+        ):
+            preview = self._preview_binary(
+                "transferencia.png",
+                b"\x89PNG\r\n\x1a\nsafe-image",
+                "image/png",
+            )
+
+        self.assertEqual(preview.status_code, 200)
+        row = preview.json()["rows"][0]
+        self.assertEqual(row["status"], "needs_review")
+        self.assertIsNone(row["type"])
+        self.assertIsNone(row["category"])
+        with self.session_factory() as db:
+            self.assertEqual(db.scalar(select(func.count(FinancialTransaction.id))), 0)
+
+        confirmed = self._confirm(
+            self.token,
+            row,
+            source="image",
+            transaction_type="expense",
+        )
+        self.assertEqual(confirmed.status_code, 200)
+        self.assertEqual(confirmed.json()["imported"], 1)
+        with self.session_factory() as db:
+            transaction = db.scalar(select(FinancialTransaction))
+            self.assertEqual(transaction.type, "expense")
+            self.assertEqual(transaction.source, "import_image")
+            self.assertIsNone(transaction.category_id)
 
     def test_unreadable_movement_is_shown_as_invalid_and_not_selected(self) -> None:
         extraction = StatementDocumentExtraction(
@@ -351,6 +422,8 @@ class StatementImportApiTestCase(unittest.TestCase):
         *,
         allow_duplicate: bool = False,
         source: str = "csv",
+        transaction_type: str | None = None,
+        category: str | None = None,
     ):
         return self.client.post(
             "/api/transactions/import/confirm",
@@ -361,8 +434,8 @@ class StatementImportApiTestCase(unittest.TestCase):
                         "date": row["date"],
                         "description": row["description"],
                         "amount": row["amount"],
-                        "type": row["type"],
-                        "category": row["category"],
+                        "type": transaction_type or row["type"],
+                        "category": category or row["category"],
                         "allow_duplicate": allow_duplicate,
                     }
                 ]
@@ -408,6 +481,23 @@ class StatementImportApiTestCase(unittest.TestCase):
                     confidence=0.97,
                     reason=None,
                 ),
+            ],
+        )
+
+    @staticmethod
+    def _receipt_extraction(*, direction: str) -> StatementDocumentExtraction:
+        return StatementDocumentExtraction(
+            document_type="single_receipt",
+            reason="Comprovante individual",
+            movements=[
+                StatementExtractedMovement(
+                    transaction_date="2026-09-22",
+                    description="Transferência PIX",
+                    amount="125.50",
+                    direction=direction,
+                    confidence=0.96,
+                    reason=None,
+                )
             ],
         )
 

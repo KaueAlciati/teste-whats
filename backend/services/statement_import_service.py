@@ -144,17 +144,21 @@ def preview_statement_import(
     except StatementDocumentError as exc:
         raise StatementImportError(str(exc)) from exc
 
-    if extraction.document_type == "single_receipt":
+    if extraction.document_type not in {"bank_statement", "single_receipt"}:
         raise StatementImportError(
-            "O arquivo parece ser um comprovante individual, não um extrato bancário"
-        )
-    if extraction.document_type != "bank_statement":
-        raise StatementImportError(
-            extraction.reason or "Não foi possível reconhecer um extrato bancário"
+            extraction.reason
+            or "Não foi possível reconhecer um extrato ou comprovante"
         )
     if not extraction.movements:
         raise StatementImportError(
-            "Nenhuma movimentação legível foi encontrada no extrato"
+            "Nenhuma movimentação legível foi encontrada no arquivo"
+        )
+    if (
+        extraction.document_type == "single_receipt"
+        and len(extraction.movements) != 1
+    ):
+        raise StatementImportError(
+            "O comprovante individual deve conter uma única movimentação"
         )
 
     source = "pdf" if extension == ".pdf" else "image"
@@ -198,6 +202,7 @@ def preview_csv_import(
             total=len(parsed.rows),
             ready=0,
             possible_duplicates=0,
+            needs_review=0,
             invalid=0,
             rows=[],
         )
@@ -225,6 +230,7 @@ def preview_csv_import(
         possible_duplicates=sum(
             row.status == "possible_duplicate" for row in preview_rows
         ),
+        needs_review=0,
         invalid=sum(row.status == "invalid" for row in preview_rows),
         rows=preview_rows,
     )
@@ -260,19 +266,22 @@ def confirm_statement_import(
             skipped_duplicates += 1
             continue
 
-        category = get_or_create_user_category(
-            db,
-            user_id=user_id,
-            category_name=row.category,
-            transaction_type=row.type,
-        )
+        category_id = None
+        if row.category:
+            category = get_or_create_user_category(
+                db,
+                user_id=user_id,
+                category_name=row.category,
+                transaction_type=row.type,
+            )
+            category_id = category.id
         create_transaction(
             db,
             user_id=user_id,
             type=row.type,
             amount=Decimal(str(row.amount)),
             description=row.description,
-            category_id=category.id,
+            category_id=category_id,
             transaction_date=row.date,
             source=transaction_source,
         )
@@ -300,7 +309,11 @@ def _normalize_extracted_movements(
     extraction: StatementDocumentExtraction,
 ) -> list[ImportPreviewRow]:
     return [
-        _normalize_extracted_movement(index, movement)
+        _normalize_extracted_movement(
+            index,
+            movement,
+            suggest_category=extraction.document_type == "bank_statement",
+        )
         for index, movement in enumerate(extraction.movements, start=1)
     ]
 
@@ -308,12 +321,15 @@ def _normalize_extracted_movements(
 def _normalize_extracted_movement(
     row_id: int,
     movement: StatementExtractedMovement,
+    *,
+    suggest_category: bool,
 ) -> ImportPreviewRow:
     errors: list[str] = []
     description = " ".join((movement.description or "").split())
     transaction_date: date | None = None
     amount: Decimal | None = None
     transaction_type: str | None = None
+    direction_needs_review = False
 
     if not description:
         errors.append("Descrição ilegível")
@@ -347,7 +363,7 @@ def _normalize_extracted_movement(
     elif movement.direction == "outflow":
         transaction_type = "expense"
     else:
-        errors.append("Entrada/saída não identificada")
+        direction_needs_review = True
 
     if movement.confidence < 0.65:
         errors.append("Leitura com baixa confiança")
@@ -356,8 +372,18 @@ def _normalize_extracted_movement(
 
     category = None
     category_source = "none"
-    if description and not description.startswith("("):
+    if suggest_category and description and not description.startswith("("):
         category, category_source = _suggest_category(description)
+
+    if errors:
+        status = "invalid"
+        if direction_needs_review:
+            errors.insert(0, "Entrada/saída não identificada")
+    elif direction_needs_review:
+        status = "needs_review"
+        errors.append("Escolha se a movimentação é entrada ou saída")
+    else:
+        status = "ready"
 
     return ImportPreviewRow(
         id=row_id,
@@ -368,7 +394,7 @@ def _normalize_extracted_movement(
         type=transaction_type,
         category=category,
         category_source=category_source,
-        status="invalid" if errors else "ready",
+        status=status,
         error_reason="; ".join(dict.fromkeys(errors)) or None,
     )
 
@@ -382,7 +408,7 @@ def _mark_duplicate_rows(
     existing_fingerprints = _existing_fingerprints(db, user_id=user_id)
     seen_fingerprints: set[tuple[date, Decimal, str, str]] = set()
     for row in rows:
-        if row.status == "invalid":
+        if row.status in {"invalid", "needs_review"}:
             continue
         assert row.date is not None
         assert row.amount is not None
@@ -417,6 +443,7 @@ def _build_preview_response(
         possible_duplicates=sum(
             row.status == "possible_duplicate" for row in rows
         ),
+        needs_review=sum(row.status == "needs_review" for row in rows),
         invalid=sum(row.status == "invalid" for row in rows),
         rows=rows,
     )

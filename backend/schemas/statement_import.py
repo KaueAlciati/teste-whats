@@ -54,7 +54,7 @@ class ImportPreviewRow(BaseModel):
     type: Literal["income", "expense"] | None
     category: str | None
     category_source: Literal["rule", "fallback", "none"]
-    status: Literal["ready", "possible_duplicate", "invalid"]
+    status: Literal["ready", "possible_duplicate", "needs_review", "invalid"]
     error_reason: str | None = None
 
 
@@ -69,6 +69,7 @@ class ImportPreviewResponse(BaseModel):
     total: int
     ready: int
     possible_duplicates: int
+    needs_review: int
     invalid: int
     rows: list[ImportPreviewRow]
 
@@ -80,7 +81,7 @@ class ImportConfirmRow(BaseModel):
     description: str = Field(min_length=1, max_length=255)
     amount: float = Field(gt=0)
     type: Literal["income", "expense"]
-    category: str = Field(min_length=1, max_length=80)
+    category: str | None = Field(default=None, min_length=1, max_length=80)
     allow_duplicate: bool = False
 
 

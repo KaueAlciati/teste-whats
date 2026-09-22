@@ -178,11 +178,12 @@ def _analyze_statement_content(
         ensure_ascii=False,
     )
     instructions = f"""
-Analise exclusivamente um EXTRATO BANCÁRIO brasileiro e retorne apenas JSON
-compatível com o schema fornecido. Um extrato contém uma lista ou tabela de
-movimentações de uma conta. Um comprovante individual de PIX, transferência,
-pagamento ou compra NÃO é extrato: classifique como single_receipt e retorne
-movements vazio. Documento sem evidência suficiente deve ser unknown.
+Analise um EXTRATO BANCÁRIO brasileiro ou um COMPROVANTE INDIVIDUAL de PIX,
+pagamento ou transferência e retorne apenas JSON compatível com o schema.
+Um extrato contém uma lista ou tabela de movimentações de uma conta. Um
+comprovante individual deve ser classificado como single_receipt e, quando os
+dados estiverem legíveis, deve retornar exatamente uma movement. Documento sem
+evidência suficiente deve ser unknown.
 
 Para cada movimentação real do extrato:
 - extraia uma linha separada; nunca transforme o arquivo inteiro em uma linha;
@@ -195,6 +196,14 @@ Para cada movimentação real do extrato:
 - não inclua saldo anterior, saldo final, saldo disponível, limite ou totalizador;
 - não invente, complete ou estime informação ausente;
 - confidence deve refletir somente a legibilidade daquela linha.
+
+Para comprovante individual:
+- envio, pagamento ou transferência realizada deve ser outflow;
+- recebimento deve ser inflow somente quando isso estiver explícito;
+- se não for possível determinar entrada ou saída, use unknown para o usuário
+  escolher na prévia;
+- não invente dados ausentes nem transforme saldo, tarifa ou total em outra
+  movimentação.
 
 JSON Schema:
 {schema}
@@ -269,7 +278,7 @@ def _merge_extractions(
 ) -> StatementDocumentExtraction:
     items = list(extractions)
     movements = [movement for item in items for movement in item.movements]
-    if movements or any(item.document_type == "bank_statement" for item in items):
+    if any(item.document_type == "bank_statement" for item in items):
         document_type = "bank_statement"
     elif any(item.document_type == "single_receipt" for item in items):
         document_type = "single_receipt"

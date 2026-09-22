@@ -16,6 +16,7 @@ type RowEdit = {
   included: boolean;
   description: string;
   category: string;
+  type: "income" | "expense" | "";
 };
 
 type Props = {
@@ -100,14 +101,17 @@ export function StatementImportDialog({ open, onClose, onImported }: Props) {
   async function confirm() {
     if (!preview) return;
     const selectedRows = preview.rows.filter(
-      (row) => row.status !== "invalid" && edits[row.id]?.included,
+      (row) =>
+        row.status !== "invalid" &&
+        edits[row.id]?.included &&
+        Boolean(edits[row.id]?.type || row.type),
     );
     const rows: ImportConfirmRow[] = selectedRows.map((row) => ({
       date: row.date || undefined,
       amount: row.amount ?? undefined,
-      type: row.type ?? undefined,
+      type: edits[row.id].type || row.type || undefined,
       description: edits[row.id].description.trim(),
-      category: edits[row.id].category.trim() || "Outros",
+      category: edits[row.id].category.trim() || undefined,
       allow_duplicate: row.status === "possible_duplicate",
     }));
     if (!rows.length) {
@@ -191,7 +195,7 @@ export function StatementImportDialog({ open, onClose, onImported }: Props) {
                 <FileText className="shrink-0 text-zinc-500" size={20} />
                 <div className="min-w-0">
                   <p className="truncate font-medium">{preview.filename}</p>
-                  <p className="text-xs text-zinc-500">{preview.total} linhas · {preview.ready ?? 0} prontas · {preview.possible_duplicates ?? 0} possíveis duplicadas · {preview.invalid ?? 0} inválidas</p>
+                  <p className="text-xs text-zinc-500">{preview.total} linhas · {preview.ready ?? 0} prontas · {preview.possible_duplicates ?? 0} possíveis duplicadas · {preview.needs_review ?? 0} para revisar · {preview.invalid ?? 0} inválidas</p>
                 </div>
               </div>
 
@@ -295,16 +299,17 @@ function MappingForm({ columns, mapping, sampleRows, analyzing, onChange, onAppl
 
 function PreviewTableRow({ row, edit, onChange }: { row: ImportPreviewRow; edit?: RowEdit; onChange: (change: Partial<RowEdit>) => void }) {
   const invalid = row.status === "invalid";
-  const status = row.status === "ready" ? "Pronta" : row.status === "possible_duplicate" ? "Possível duplicada" : "Inválida";
+  const awaitingType = row.status === "needs_review" && !edit?.type;
+  const status = row.status === "ready" ? "Pronta" : row.status === "possible_duplicate" ? "Possível duplicada" : row.status === "needs_review" ? "Escolha o tipo" : "Inválida";
   return (
     <tr className="border-t border-zinc-800 align-top">
-      <td className="p-3"><input type="checkbox" disabled={invalid} checked={edit?.included ?? false} onChange={(event) => onChange({ included: event.target.checked })} aria-label={`Selecionar ${row.description}`} /></td>
+      <td className="p-3"><input type="checkbox" disabled={invalid || awaitingType} checked={edit?.included ?? false} onChange={(event) => onChange({ included: event.target.checked })} aria-label={`Selecionar ${row.description}`} /></td>
       <td className="whitespace-nowrap p-3 text-zinc-400">{row.date ? formatDate(row.date) : "—"}</td>
       <td className="min-w-48 p-3"><input disabled={invalid} value={edit?.description ?? row.description} onChange={(event) => onChange({ description: event.target.value })} className="w-full border-b border-transparent bg-transparent focus:border-emerald-500 focus:outline-none disabled:text-zinc-500" /></td>
-      <td className="p-3 text-zinc-400">{row.type === "income" ? "Entrada" : row.type === "expense" ? "Saída" : "—"}</td>
+      <td className="p-3 text-zinc-400">{row.status === "needs_review" || !row.type ? <select disabled={invalid} value={edit?.type ?? ""} onChange={(event) => onChange({ type: event.target.value as RowEdit["type"], included: false })} className="rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1.5 focus:border-emerald-500 focus:outline-none"><option value="">Selecione</option><option value="income">Entrada</option><option value="expense">Saída</option></select> : row.type === "income" ? "Entrada" : "Saída"}</td>
       <td className="whitespace-nowrap p-3 text-right">{row.amount == null ? "—" : row.amount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</td>
       <td className="min-w-40 p-3"><input disabled={invalid} value={edit?.category ?? ""} onChange={(event) => onChange({ category: event.target.value })} className="w-full border-b border-transparent bg-transparent focus:border-emerald-500 focus:outline-none disabled:text-zinc-500" /></td>
-      <td className="p-3"><span className={`whitespace-nowrap rounded-full border px-2 py-1 text-xs ${row.status === "ready" ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400" : row.status === "possible_duplicate" ? "border-amber-500/20 bg-amber-500/10 text-amber-300" : "border-red-500/20 bg-red-500/10 text-red-300"}`} title={row.error_reason ?? undefined}>{status}</span>{invalid && row.error_reason && <p className="mt-1 max-w-52 text-xs text-zinc-500">{row.error_reason}</p>}</td>
+      <td className="p-3"><span className={`whitespace-nowrap rounded-full border px-2 py-1 text-xs ${row.status === "ready" ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400" : row.status === "possible_duplicate" || row.status === "needs_review" ? "border-amber-500/20 bg-amber-500/10 text-amber-300" : "border-red-500/20 bg-red-500/10 text-red-300"}`} title={row.error_reason ?? undefined}>{status}</span>{(invalid || row.status === "needs_review") && row.error_reason && <p className="mt-1 max-w-52 text-xs text-zinc-500">{row.error_reason}</p>}</td>
     </tr>
   );
 }
@@ -313,7 +318,8 @@ function createInitialEdits(rows: ImportPreviewRow[]): Record<number, RowEdit> {
   return Object.fromEntries(rows.map((row) => [row.id, {
     included: row.status === "ready",
     description: row.description,
-    category: row.category || "Outros",
+    category: row.category || "",
+    type: row.type || "",
   }]));
 }
 

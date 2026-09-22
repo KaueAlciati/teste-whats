@@ -321,6 +321,7 @@ export type ImportSourceFormat = "csv" | "pdf" | "image";
 export type ImportRowStatus =
   | "ready"
   | "possible_duplicate"
+  | "needs_review"
   | "invalid"
   | "new"
   | "duplicated"
@@ -360,6 +361,7 @@ export type ImportPreviewResponse = {
   total: number;
   ready?: number;
   possible_duplicates?: number;
+  needs_review?: number;
   invalid?: number;
   new?: number;
   duplicated?: number;
@@ -372,7 +374,7 @@ export type ImportConfirmRow = {
   date?: string;
   amount?: number;
   type?: "income" | "expense";
-  category: string;
+  category?: string;
   description: string;
   allow_duplicate?: boolean;
 };
