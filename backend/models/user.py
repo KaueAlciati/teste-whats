@@ -76,6 +76,10 @@ class User(Base):
         cascade="all, delete-orphan",
         uselist=False,
     )
+    password_reset_tokens: Mapped[list["PasswordResetToken"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 
 from backend.models.category import Category  # noqa: E402
@@ -83,4 +87,5 @@ from backend.models.financial_transaction import FinancialTransaction  # noqa: E
 from backend.models.financial_profile import FinancialProfile  # noqa: E402
 from backend.models.goal import Goal  # noqa: E402
 from backend.models.goal_contribution import GoalContribution  # noqa: E402
+from backend.models.password_reset_token import PasswordResetToken  # noqa: E402
 from backend.models.transaction_attachment import TransactionAttachment  # noqa: E402

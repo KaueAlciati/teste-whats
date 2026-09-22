@@ -782,13 +782,27 @@ export const api = {
   },
 
   // Authentication
-  forgotPassword: async (email: string) => {
+  forgotPassword: async (email: string): Promise<{ message: string }> => {
     return await fetchWithTimeout(`${API_URL}/auth/forgot-password`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ email }),
+    });
+  },
+
+  resetPassword: async (data: {
+    token: string;
+    new_password: string;
+    confirm_new_password: string;
+  }): Promise<{ status: string }> => {
+    return await fetchWithTimeout(`${API_URL}/auth/reset-password`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
     });
   },
 

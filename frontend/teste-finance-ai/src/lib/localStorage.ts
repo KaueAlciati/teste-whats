@@ -793,12 +793,7 @@ const localStorageBackend = {
   },
 
   async forgotPassword(email: string): Promise<void> {
-    const users = readLs<LocalUserRecord[]>(LS_KEY_USERS, []);
-    const exists = users.some((u) => u.email.toLowerCase() === email.toLowerCase());
-    if (!exists) {
-      throw new Error("E-mail não encontrado");
-    }
-    // Modo demo: só retorna sucesso sem enviar e-mail real
+    void email;
     await new Promise((r) => setTimeout(r, 300));
   },
 

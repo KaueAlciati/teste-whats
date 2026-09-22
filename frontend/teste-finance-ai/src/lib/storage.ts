@@ -203,11 +203,17 @@ export const storage = {
   },
 
   // --- Auth ---
-  forgotPassword: async (email: string): Promise<void> =>
-    resolveWrite(
-      () => api.forgotPassword(email),
-      () => localStorageApi.forgotPassword(email),
-    ),
+  forgotPassword: async (email: string): Promise<void> => {
+    await api.forgotPassword(email);
+  },
+
+  resetPassword: async (data: {
+    token: string;
+    new_password: string;
+    confirm_new_password: string;
+  }): Promise<void> => {
+    await api.resetPassword(data);
+  },
 
   updateProfile: async (data: { name?: string; email?: string }): Promise<UserProfile> =>
     resolveWrite(

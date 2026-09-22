@@ -31,6 +31,29 @@ class LoginRequest(BaseModel):
     password: SecretStr = Field(min_length=1, max_length=128)
 
 
+class ForgotPasswordRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token: SecretStr = Field(min_length=32, max_length=512)
+    new_password: SecretStr = Field(min_length=8, max_length=128)
+    confirm_new_password: SecretStr = Field(min_length=8, max_length=128)
+
+    @model_validator(mode="after")
+    def passwords_must_match(self) -> "ResetPasswordRequest":
+        if (
+            self.new_password.get_secret_value()
+            != self.confirm_new_password.get_secret_value()
+        ):
+            raise ValueError("A confirmação da nova senha não confere")
+        return self
+
+
 class ProfileUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

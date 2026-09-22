@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -6,12 +6,25 @@ from backend.database.connection import get_db
 from backend.models.user import User
 from backend.schemas.auth import (
     DestructiveActionRequest,
+    ForgotPasswordRequest,
     LoginRequest,
     PasswordChangeRequest,
     ProfileUpdateRequest,
     RegisterRequest,
+    ResetPasswordRequest,
     TokenResponse,
     UserResponse,
+)
+from backend.services.email_service import (
+    EmailConfigurationError,
+    get_smtp_settings,
+    send_password_reset_email_safely,
+)
+from backend.services.password_reset_service import (
+    InvalidPasswordResetTokenError,
+    PasswordResetConfigurationError,
+    create_password_reset_token,
+    reset_password_with_token,
 )
 from backend.services.account_settings_service import (
     clear_financial_history,
@@ -110,6 +123,58 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Autenticação indisponível",
         ) from None
+
+
+@router.post("/forgot-password")
+def forgot_password(
+    payload: ForgotPasswordRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    try:
+        smtp_settings = get_smtp_settings()
+        reset_request = create_password_reset_token(
+            db,
+            email=str(payload.email),
+        )
+    except (EmailConfigurationError, PasswordResetConfigurationError):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Recuperação de senha indisponível",
+        ) from None
+
+    if reset_request is not None:
+        recipient_email, raw_token = reset_request
+        background_tasks.add_task(
+            send_password_reset_email_safely,
+            recipient_email,
+            raw_token,
+            smtp_settings,
+        )
+    return {
+        "message": (
+            "Se o e-mail estiver cadastrado, você receberá um link de recuperação."
+        )
+    }
+
+
+@router.post("/reset-password")
+def reset_password(
+    payload: ResetPasswordRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    try:
+        reset_password_with_token(
+            db,
+            raw_token=payload.token.get_secret_value(),
+            new_password=payload.new_password.get_secret_value(),
+        )
+    except InvalidPasswordResetTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from None
+    return {"status": "ok"}
 
 
 @router.get("/me", response_model=UserResponse)

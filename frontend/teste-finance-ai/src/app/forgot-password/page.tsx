@@ -19,7 +19,10 @@ export default function ForgotPasswordPage() {
     try {
       await storage.forgotPassword(email);
       setSent(true);
-      addToast("success", "Link de recuperação enviado. Confira seu e-mail.");
+      addToast(
+        "success",
+        "Se o e-mail estiver cadastrado, você receberá o link de recuperação.",
+      );
     } catch {
       addToast("error", "Erro ao enviar e-mail. Tente novamente.");
     } finally {
@@ -52,8 +55,8 @@ export default function ForgotPasswordPage() {
               Verifique seu e-mail
             </h2>
             <p className="text-zinc-400 mb-6 text-sm sm:text-base leading-relaxed">
-              Enviamos um link de recuperação para{" "}
-              <span className="text-zinc-200 font-medium">{email}</span>
+              Se o e-mail estiver cadastrado, você receberá um link de
+              recuperação em instantes.
             </p>
             <Link
               href="/login"
@@ -118,7 +121,7 @@ export default function ForgotPasswordPage() {
                   placeholder="seu@email.com"
                   required
                   minLength={5}
-                  maxLength={120}
+                  maxLength={320}
                 />
               </div>
             </div>
