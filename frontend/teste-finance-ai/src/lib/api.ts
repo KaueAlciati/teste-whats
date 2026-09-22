@@ -487,6 +487,64 @@ const fetchWithTimeout = async (
   }
 };
 
+const fetchFileWithTimeout = async (
+  url: string,
+  timeout = 30000,
+): Promise<{ blob: Blob; filename: string }> => {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: withAuthHeaders(),
+      signal: controller.signal,
+    });
+    clearTimeout(id);
+
+    if (!response.ok) {
+      let responseBody: unknown;
+      try {
+        responseBody = await response.json();
+      } catch {
+        responseBody = undefined;
+      }
+      throw new HttpError(
+        `HTTP error! status: ${response.status}`,
+        response.status >= 500 ? "http_5xx" : "http_4xx",
+        response.status,
+        responseBody,
+      );
+    }
+
+    const disposition = response.headers.get("content-disposition") ?? "";
+    const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+    const defaultExtension = response.headers
+      .get("content-type")
+      ?.includes("text/csv")
+      ? "csv"
+      : "xlsx";
+    return {
+      blob: await response.blob(),
+      filename:
+        filenameMatch?.[1] ?? `extrato-fincontrol.${defaultExtension}`,
+    };
+  } catch (error) {
+    clearTimeout(id);
+    if (error instanceof HttpError) throw error;
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new HttpError("Export request timed out", "timeout");
+    }
+    if (error instanceof TypeError && error.message === "Failed to fetch") {
+      throw new HttpError("Backend unavailable", "network_unavailable");
+    }
+    throw new HttpError(
+      error instanceof Error ? error.message : "Unknown export error",
+      "unknown",
+    );
+  }
+};
+
 export const api = {
   request: async <T,>(
     path: string,
@@ -558,6 +616,19 @@ export const api = {
     return await fetchWithTimeout(`${API_URL}/transactions/${id}`, {
       method: "DELETE",
     });
+  },
+
+  exportTransactions: async (options: {
+    format?: "xlsx" | "csv";
+    startDate?: string;
+    endDate?: string;
+  }): Promise<{ blob: Blob; filename: string }> => {
+    const params = new URLSearchParams({ format: options.format ?? "xlsx" });
+    if (options.startDate) params.set("start_date", options.startDate);
+    if (options.endDate) params.set("end_date", options.endDate);
+    return await fetchFileWithTimeout(
+      `${API_URL}/transactions/export?${params.toString()}`,
+    );
   },
 
   // Goals

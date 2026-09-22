@@ -1,4 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import date, datetime
+from typing import Literal
+from zoneinfo import ZoneInfo
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from backend.api.auth import get_current_user
@@ -13,6 +17,11 @@ from backend.services.financial_service import (
     get_transaction,
     list_transactions,
     update_transaction,
+)
+from backend.services.statement_export_service import (
+    custom_period,
+    current_month_period,
+    generate_statement,
 )
 
 
@@ -32,6 +41,56 @@ def get_transactions(
             limit=1000,
         )
     ]
+
+
+@router.get("/export")
+def export_transactions(
+    export_format: Literal["xlsx", "csv"] = Query("xlsx", alias="format"),
+    start_date: date | None = None,
+    end_date: date | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    if (start_date is None) != (end_date is None):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Informe data inicial e final para exportar um intervalo",
+        )
+
+    try:
+        period = (
+            custom_period(start_date, end_date)
+            if start_date is not None and end_date is not None
+            else current_month_period(
+                datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from None
+
+    exported = generate_statement(
+        db,
+        user_id=current_user.id,
+        period=period,
+        export_format=export_format,
+    )
+    if exported is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Nenhuma transação encontrada no período",
+        )
+
+    return Response(
+        content=exported.content,
+        media_type=exported.media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{exported.filename}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.post(

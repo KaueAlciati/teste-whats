@@ -68,13 +68,18 @@ from backend.services.pending_audio_confirmation_service import (
     pending_audio_is_expired,
 )
 from backend.services.receipt_assistant_service import handle_pending_receipt_reply
+from backend.services.statement_export_service import (
+    ExportedStatement,
+    generate_statement,
+    resolve_whatsapp_statement_request,
+)
 from backend.services.user_service import get_or_create_whatsapp_user
 from backend.services.whatsapp_media_service import (
     WhatsAppMediaError,
     WhatsAppMediaTooLargeError,
     download_whatsapp_media,
 )
-from backend.services.whatsapp_service import send_text_message
+from backend.services.whatsapp_service import send_document_message, send_text_message
 
 
 logger = logging.getLogger("uvicorn.error")
@@ -163,7 +168,7 @@ async def process_financial_message(
     audio_transcription: str | None = None,
 ) -> None:
     try:
-        response_text = await asyncio.to_thread(
+        response = await asyncio.to_thread(
             _process_financial_message,
             whatsapp_phone,
             whatsapp_message_id,
@@ -173,16 +178,31 @@ async def process_financial_message(
         )
     except FinancialAIServiceError:
         logger.error("Falha ao interpretar mensagem financeira")
-        response_text = AI_ERROR_MESSAGE
+        response = AI_ERROR_MESSAGE
     except (SQLAlchemyError, RuntimeError, ValueError, LookupError):
         logger.error("Falha ao processar operação financeira")
-        response_text = DATABASE_ERROR_MESSAGE
+        response = DATABASE_ERROR_MESSAGE
     except Exception:
         logger.error("Falha inesperada no assistente financeiro")
-        response_text = DATABASE_ERROR_MESSAGE
+        response = DATABASE_ERROR_MESSAGE
 
-    if response_text:
-        await send_text_message(whatsapp_phone, response_text)
+    if isinstance(response, ExportedStatement):
+        sent = await send_document_message(
+            whatsapp_phone,
+            content=response.content,
+            filename=response.filename,
+            mime_type=response.media_type,
+            caption=f"Extrato FinControl AI · {response.period_label}",
+        )
+        if not sent:
+            await send_text_message(
+                whatsapp_phone,
+                "Não consegui enviar seu extrato agora. Tenta novamente em alguns instantes.",
+            )
+        return
+
+    if response:
+        await send_text_message(whatsapp_phone, response)
 
 
 def _process_financial_message(
@@ -191,7 +211,7 @@ def _process_financial_message(
     text: str,
     source: str = "whatsapp_text",
     audio_transcription: str | None = None,
-) -> str | None:
+) -> str | ExportedStatement | None:
     if engine is None:
         raise RuntimeError("Banco de dados indisponível")
 
@@ -223,7 +243,7 @@ def handle_financial_message(
     confirmed_audio: bool = False,
     pending_audio_correction: str | None = None,
     skip_pending_context: bool = False,
-) -> str | None:
+) -> str | ExportedStatement | None:
     if get_transaction_by_whatsapp_message_id(db, whatsapp_message_id) is not None:
         return None
 
@@ -231,6 +251,30 @@ def handle_financial_message(
         ZoneInfo("America/Sao_Paulo")
     )
     variant = response_variant(whatsapp_message_id)
+
+    statement_request = resolve_whatsapp_statement_request(
+        text,
+        current_date=current_date,
+    )
+    if statement_request is not None:
+        exported = generate_statement(
+            db,
+            user_id=user.id,
+            period=statement_request,
+            export_format="xlsx",
+        )
+        if exported is None:
+            item = (
+                "gastos"
+                if statement_request.transaction_type == "expense"
+                else "movimentações"
+            )
+            return (
+                f"Não encontrei {item} no período solicitado, "
+                "então não gerei um arquivo vazio."
+            )
+        return exported
+
     if not skip_pending_context:
         audio_pending_handled, audio_pending_response = _handle_pending_audio_reply(
             db,

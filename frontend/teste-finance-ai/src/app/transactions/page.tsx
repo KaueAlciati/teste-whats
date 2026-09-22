@@ -4,15 +4,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowUpCircle, ArrowDownCircle, Search, Trash2, Pencil, Download, UploadCloud, SlidersHorizontal, X } from "lucide-react";
 import Link from "next/link";
 import { storage } from "@/lib/storage";
-import type { Transaction } from "@/lib/api";
+import { api, HttpError, type Transaction } from "@/lib/api";
 import { AppLayout } from "@/components/AppLayout";
 import { useHandleFetchError } from "@/hooks/useHandleFetchError";
 import { useToast } from "@/contexts/ToastContext";
-import { downloadTransactionsCsv } from "@/lib/csv";
 import { formatCurrency } from "@/lib/utils";
 import { formatCategoryLabel, normalizeCategoryKey } from "@/lib/category";
 
 type SourceFilter = "all" | "manual" | "import";
+type ExportFormat = "xlsx" | "csv";
 
 export default function TransactionsPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -25,6 +25,7 @@ export default function TransactionsPage() {
   const [dateTo, setDateTo] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [exportingFormat, setExportingFormat] = useState<ExportFormat | null>(null);
   const handleFetchError = useHandleFetchError();
   const { addToast } = useToast();
 
@@ -97,13 +98,32 @@ export default function TransactionsPage() {
     setFilteredTransactions(filtered);
   }, [search, sourceFilter, categoryFilter, dateFrom, dateTo, transactions]);
 
-  function handleExport() {
-    if (filteredTransactions.length === 0) {
-      addToast("error", "Não há transações para exportar.");
+  async function handleExport(format: ExportFormat) {
+    if ((dateFrom && !dateTo) || (!dateFrom && dateTo)) {
+      addToast("error", "Informe as duas datas para exportar um intervalo.");
       return;
     }
-    downloadTransactionsCsv(filteredTransactions);
-    addToast("success", "Extrato exportado em CSV.");
+    setExportingFormat(format);
+    try {
+      const exported = await api.exportTransactions({
+        format,
+        startDate: dateFrom || undefined,
+        endDate: dateTo || undefined,
+      });
+      downloadBlob(exported.blob, exported.filename);
+      addToast(
+        "success",
+        format === "xlsx" ? "Extrato exportado em Excel." : "Extrato exportado em CSV.",
+      );
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 404) {
+        addToast("error", "Não há transações no período para exportar.");
+      } else {
+        await handleFetchError(error, "Erro ao exportar extrato:");
+      }
+    } finally {
+      setExportingFormat(null);
+    }
   }
 
   async function handleDelete(transaction: Transaction) {
@@ -153,17 +173,27 @@ export default function TransactionsPage() {
             />
           </div>
 
-          {/* Exportar CSV — sozinho, sem texto, já é um alvo de toque
-              confortável (44x44px) e não briga por espaço com a busca
-              em telas estreitas; o rótulo só aparece a partir de "sm". */}
           <button
-            onClick={handleExport}
-            aria-label="Exportar extrato em CSV"
-            title="Exportar extrato em CSV"
-            className="shrink-0 flex items-center justify-center gap-2 h-[42px] w-[42px] sm:w-auto sm:px-4 rounded-xl border border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-emerald-500/40 hover:text-emerald-400 active:scale-95 transition-all text-sm font-medium"
+            onClick={() => handleExport("xlsx")}
+            disabled={exportingFormat !== null}
+            aria-label="Exportar extrato em Excel"
+            title="Exportar extrato em Excel"
+            className="shrink-0 flex items-center justify-center gap-2 h-[42px] w-[42px] sm:w-auto sm:px-4 rounded-xl border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/15 active:scale-95 transition-all text-sm font-medium disabled:opacity-50"
           >
             <Download size={18} />
-            <span className="hidden sm:inline">Exportar CSV</span>
+            <span className="hidden sm:inline">
+              {exportingFormat === "xlsx" ? "Exportando..." : "Exportar Excel"}
+            </span>
+          </button>
+
+          <button
+            onClick={() => handleExport("csv")}
+            disabled={exportingFormat !== null}
+            aria-label="Exportar extrato em CSV"
+            title="Exportar extrato em CSV"
+            className="shrink-0 flex items-center justify-center h-[42px] px-3 rounded-xl border border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-emerald-500/40 hover:text-emerald-400 active:scale-95 transition-all text-xs font-medium disabled:opacity-50"
+          >
+            {exportingFormat === "csv" ? "..." : "CSV"}
           </button>
 
           <Link
@@ -482,4 +512,15 @@ function formatTransactionDate(value: string): string {
   const [year, month, day] = value.slice(0, 10).split("-");
   if (!year || !month || !day) return value;
   return `${day}/${month}/${year}`;
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
