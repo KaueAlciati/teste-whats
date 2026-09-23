@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { FinancialProfileInput } from "./api";
 import {
+  formatTreasurySelicRate,
   isCompleteProfile,
   onboardingProgress,
   resolveInsightsView,
@@ -20,6 +21,11 @@ const completeProfile: FinancialProfileInput = {
 };
 
 describe("fluxo de Insights", () => {
+  it("apresenta a taxa do Tesouro Selic como ágio ou deságio sobre a Selic", () => {
+    expect(formatTreasurySelicRate(0.01)).toBe("Selic + 0,01% a.a.");
+    expect(formatTreasurySelicRate(-0.03)).toBe("Selic − 0,03% a.a.");
+  });
+
   it("mostra onboarding para usuário novo", () => {
     expect(
       resolveInsightsView({

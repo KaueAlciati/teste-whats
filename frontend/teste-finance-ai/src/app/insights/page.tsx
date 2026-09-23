@@ -43,6 +43,7 @@ import {
   type InsightsAnalysis,
 } from "@/lib/api";
 import {
+  formatTreasurySelicRate,
   isCompleteProfile,
   onboardingProgress,
   profileToInput,
@@ -481,8 +482,9 @@ export default function InsightsPage() {
                         : "não informado"}
                     </p>
                     <p className="mt-1 text-xl font-bold text-emerald-400">
-                      {formatRate(analysis.market.treasury_selic.rate)}{" "}
-                      {analysis.market.treasury_selic.unit}
+                      {formatTreasurySelicRate(
+                        analysis.market.treasury_selic.selic_spread,
+                      )}
                     </p>
                   </>
                 ) : (
@@ -493,7 +495,7 @@ export default function InsightsPage() {
             </div>
             <p className="mt-2 text-xs text-zinc-500">
               {analysis.market.treasury_selic.message ||
-                `Referência: ${analysis.market.treasury_selic.reference_period || "não informada"}`}
+                `Taxa de compra: ágio/deságio sobre a Selic · Referência: ${analysis.market.treasury_selic.reference_period || "não informada"}`}
             </p>
           </div>
 

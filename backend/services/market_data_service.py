@@ -25,7 +25,7 @@ MAX_TREASURY_CSV_BYTES = 25 * 1024 * 1024
 
 SELIC_URL = (
     "https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/"
-    "dados/ultimos/1?formato=json"
+    "dados"
 )
 SAVINGS_URL = (
     "https://api.bcb.gov.br/dados/serie/bcdata.sgs.195/"
@@ -88,6 +88,7 @@ def get_market_analysis(
                     source_name="Banco Central do Brasil - SGS 432",
                     minimum=Decimal("0"),
                     maximum=Decimal("100"),
+                    not_after=now.date(),
                 ),
                 source=MarketSource(
                     name="Banco Central do Brasil - SGS 432",
@@ -180,23 +181,43 @@ def _fetch_bcb_rate(
     source_name: str,
     minimum: Decimal,
     maximum: Decimal,
+    not_after: date | None = None,
 ) -> MarketRateIndicator:
-    response = client.get(url)
+    request_params = None
+    if not_after is not None:
+        start_date = not_after - timedelta(days=90)
+        request_params = {
+            "formato": "json",
+            "dataInicial": start_date.strftime("%d/%m/%Y"),
+            "dataFinal": not_after.strftime("%d/%m/%Y"),
+        }
+    response = client.get(url, params=request_params)
     response.raise_for_status()
     payload = response.json()
     if not isinstance(payload, list) or not payload:
         raise ValueError("resposta vazia")
-    record = payload[-1]
-    value = _decimal(record.get("valor"))
-    if not minimum <= value <= maximum:
-        raise ValueError("valor fora do intervalo esperado")
-    reference = datetime.strptime(record["data"], "%d/%m/%Y").date()
+    candidates: list[tuple[date, Decimal]] = []
+    for record in payload:
+        if not isinstance(record, dict):
+            continue
+        try:
+            reference = datetime.strptime(record["data"], "%d/%m/%Y").date()
+            value = _decimal(record.get("valor"))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not_after is not None and reference > not_after:
+            continue
+        if minimum <= value <= maximum:
+            candidates.append((reference, value))
+    if not candidates:
+        raise ValueError("nenhum registro válido na data de referência")
+    reference, value = max(candidates, key=lambda item: item[0])
     return MarketRateIndicator(
         status="available",
         value=float(value),
         unit=unit,
         reference_period=reference.isoformat(),
-        source=MarketSource(name=source_name, url=url),
+        source=MarketSource(name=source_name, url=str(response.request.url)),
     )
 
 
@@ -289,7 +310,7 @@ def _fetch_treasury_selic(client: httpx.Client) -> TreasurySelicIndicator:
         status="available",
         title=selected["title"],
         maturity_date=selected["maturity_date"],
-        rate=float(selected["rate"]),
+        selic_spread=float(selected["rate"]),
         unit="% a.a.",
         reference_period=selected["reference_date"].isoformat(),
         source=MarketSource(
@@ -340,7 +361,7 @@ def _safe_treasury(fetcher) -> TreasurySelicIndicator:
             status="unavailable",
             title=None,
             maturity_date=None,
-            rate=None,
+            selic_spread=None,
             unit="% a.a.",
             reference_period=None,
             source=source,

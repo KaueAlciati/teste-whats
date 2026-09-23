@@ -1,6 +1,12 @@
 import type { FinancialProfile, FinancialProfileInput } from "./api";
 
 
+const PERCENTAGE = new Intl.NumberFormat("pt-BR", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 4,
+});
+
+
 export const FINANCIAL_PROFILE_FIELDS: (keyof FinancialProfileInput)[] = [
   "main_goal",
   "investment_horizon",
@@ -65,4 +71,10 @@ export function profileToInput(
     income_type: profile.income_type,
     main_priority: profile.main_priority,
   };
+}
+
+export function formatTreasurySelicRate(selicSpread: number | null): string {
+  if (selicSpread === null) return "Indisponível";
+  const operator = selicSpread >= 0 ? "+" : "−";
+  return `Selic ${operator} ${PERCENTAGE.format(Math.abs(selicSpread))}% a.a.`;
 }

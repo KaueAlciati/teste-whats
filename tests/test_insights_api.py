@@ -242,6 +242,13 @@ class InsightsApiTestCase(unittest.TestCase):
         self.assertEqual(body["market"]["cdi"]["status"], "unavailable")
         self.assertEqual(body["ai"]["content"]["financial_summary"], "Resumo")
         ai_mock.assert_called_once()
+        ai_payload = ai_mock.call_args.args[0]["financial_summary"]
+        self.assertNotIn("committed_income_percentage", ai_payload)
+        self.assertEqual(ai_payload["expense_to_income_percentage"], 30.0)
+        self.assertIn(
+            "Despesas do mês",
+            ai_payload["expense_to_income_percentage_definition"],
+        )
 
     def test_ai_cache_avoids_repeated_groq_calls(self) -> None:
         self._create_profile(self.token)
@@ -312,6 +319,14 @@ class InsightsApiTestCase(unittest.TestCase):
             self._transaction(
                 db,
                 user_id=self.user.id,
+                transaction_type="income",
+                amount="245.10",
+                description="Entrada",
+                transaction_date=date.today(),
+            )
+            self._transaction(
+                db,
+                user_id=self.user.id,
                 transaction_type="expense",
                 amount="100.00",
                 description="Compra",
@@ -319,6 +334,9 @@ class InsightsApiTestCase(unittest.TestCase):
             )
         unsafe = self._ai_content().model_copy(
             update={
+                "financial_summary": (
+                    "40,8% das receitas comprometidas em metas no período."
+                ),
                 "cut_suggestions": ["Corte 100% de Sem categoria."],
                 "next_steps": ["Invista agora"],
             }
@@ -341,6 +359,9 @@ class InsightsApiTestCase(unittest.TestCase):
         self.assertNotIn("100%", " ".join(cuts))
         steps = body["ai"]["content"]["next_steps"]
         self.assertIn("Classificar", steps[0])
+        ai_summary = body["ai"]["content"]["financial_summary"]
+        self.assertIn("renda comprometida com despesas", ai_summary)
+        self.assertNotIn("comprometidas em metas", ai_summary)
 
     def test_analysis_requires_completed_profile(self) -> None:
         response = self.client.get(
@@ -432,7 +453,7 @@ class InsightsApiTestCase(unittest.TestCase):
                 status="available",
                 title="Tesouro Selic",
                 maturity_date=date(2029, 3, 1),
-                rate=0.05,
+                selic_spread=0.05,
                 unit="% a.a.",
                 reference_period="2026-09-23",
                 source=MarketSource(

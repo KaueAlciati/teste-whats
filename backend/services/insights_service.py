@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
@@ -55,7 +56,7 @@ def build_insights_analysis(
     )
     ai_payload = {
         "financial_profile": _profile_payload(profile),
-        "financial_summary": summary.model_dump(mode="json"),
+        "financial_summary": _ai_financial_summary_payload(summary),
         "category_analysis": {
             "distribution": [
                 item.model_dump(mode="json")
@@ -281,8 +282,10 @@ def _apply_insight_guardrails(
         ),
         None,
     )
+    def correct_ratio(text: str) -> str:
+        return _correct_expense_ratio_language(text, summary)
     safe_cuts = [
-        suggestion
+        correct_ratio(suggestion)
         for suggestion in content.cut_suggestions
         if not _suggests_total_cut(suggestion)
     ]
@@ -329,12 +332,23 @@ def _apply_insight_guardrails(
 
     return content.model_copy(
         update={
+            "financial_summary": correct_ratio(content.financial_summary),
+            "positive_points": [
+                correct_ratio(item) for item in content.positive_points
+            ],
+            "attention_points": [
+                correct_ratio(item) for item in content.attention_points
+            ],
+            "improvements": [
+                correct_ratio(item) for item in content.improvements
+            ],
             "cut_suggestions": safe_cuts,
             "prioritization": (
                 "Priorize nesta ordem: qualidade dos dados, orçamento e dívidas, "
                 "reserva de emergência, metas e, por último, investimentos."
             ),
-            "next_steps": steps[:5],
+            "goals_analysis": correct_ratio(content.goals_analysis),
+            "next_steps": [correct_ratio(item) for item in steps[:5]],
         }
     )
 
@@ -354,4 +368,36 @@ def _suggests_total_cut(text: str) -> bool:
             "corte todo",
             "corte toda",
         )
+    )
+
+
+def _ai_financial_summary_payload(summary: FinancialSummary) -> dict:
+    payload = summary.model_dump(mode="json")
+    percentage = payload.pop("committed_income_percentage")
+    payload["expense_to_income_percentage"] = percentage
+    payload["expense_to_income_percentage_definition"] = (
+        "Despesas do mês divididas pelas entradas do mês; não representa "
+        "aportes ou comprometimento com metas."
+    )
+    return payload
+
+
+def _correct_expense_ratio_language(
+    text: str,
+    summary: FinancialSummary,
+) -> str:
+    percentage = summary.committed_income_percentage
+    if percentage is None:
+        return text
+    pattern = re.compile(
+        r"\b\d+(?:[.,]\d+)?\s*%\s+d(?:a|as|e)\s+"
+        r"(?:receitas?|renda|entradas?)\s+"
+        r"(?:est[aã]o\s+|s[aã]o\s+)?comprometid[ao]s?\s+"
+        r"(?:em|com)\s+metas\b",
+        re.IGNORECASE,
+    )
+    corrected = f"{percentage:.1f}".replace(".", ",")
+    return pattern.sub(
+        f"{corrected}% da renda comprometida com despesas",
+        text,
     )

@@ -41,10 +41,20 @@ class MarketDataServiceTestCase(unittest.TestCase):
         self.assertEqual(market.ipca.unit, "% em 12 meses")
         self.assertEqual(market.treasury_selic.title, "Tesouro Selic")
         self.assertEqual(str(market.treasury_selic.maturity_date), "2029-03-01")
-        self.assertEqual(market.treasury_selic.rate, 0.05)
+        self.assertEqual(market.treasury_selic.selic_spread, 0.05)
         self.assertEqual(market.cdi.status, "unavailable")
         self.assertIsNone(market.cdi.value)
         self.assertIn("não é estimado", market.cdi.message)
+
+    def test_selic_ignores_records_after_the_reference_date(self) -> None:
+        with self._client() as client:
+            market = get_market_analysis(
+                client=client,
+                current_time=datetime(2026, 9, 23, 12, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(market.selic.value, 13.75)
+        self.assertEqual(market.selic.reference_period, "2026-09-23")
 
     def test_failure_is_isolated_to_its_indicator(self) -> None:
         with self._client(fail_selic=True) as client:
@@ -71,13 +81,17 @@ class MarketDataServiceTestCase(unittest.TestCase):
         def handler(request: httpx.Request) -> httpx.Response:
             url = str(request.url)
             self.calls.append(url)
-            if url == SELIC_URL:
+            if url.startswith(SELIC_URL):
                 if fail_selic:
                     return httpx.Response(503, request=request)
                 return httpx.Response(
                     200,
                     request=request,
-                    json=[{"data": "23/09/2026", "valor": "13,75"}],
+                    json=[
+                        {"data": "22/09/2026", "valor": "13,50"},
+                        {"data": "24/09/2026", "valor": "14,00"},
+                        {"data": "23/09/2026", "valor": "13,75"},
+                    ],
                 )
             if url == SAVINGS_URL:
                 return httpx.Response(

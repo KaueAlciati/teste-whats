@@ -262,7 +262,7 @@ export type InsightsAnalysis = {
       status: "available" | "unavailable";
       title: string | null;
       maturity_date: string | null;
-      rate: number | null;
+      selic_spread: number | null;
       unit: string;
       reference_period: string | null;
       source: MarketSource;

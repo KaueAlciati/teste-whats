@@ -178,7 +178,7 @@ class TreasurySelicIndicator(BaseModel):
     status: Literal["available", "unavailable"]
     title: str | None
     maturity_date: date | None
-    rate: float | None
+    selic_spread: float | None
     unit: str
     reference_period: str | None
     source: MarketSource
