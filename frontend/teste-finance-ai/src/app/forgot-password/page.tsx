@@ -117,7 +117,7 @@ export default function ForgotPasswordPage() {
                   autoComplete="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full bg-zinc-950/60 border border-zinc-700/70 rounded-xl pl-11 pr-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-emerald-500/20 focus:border-emerald-500 focus:bg-zinc-900/80 transition-all"
+                  className="w-full bg-zinc-950/60 border border-zinc-700/70 rounded-xl pl-11 pr-3.5 py-2.5 text-base sm:text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-emerald-500/20 focus:border-emerald-500 focus:bg-zinc-900/80 transition-all"
                   placeholder="seu@email.com"
                   required
                   minLength={5}

@@ -193,7 +193,7 @@ function PasswordInput({
           autoComplete="new-password"
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          className="w-full bg-zinc-950/60 border border-zinc-700/70 rounded-xl pl-11 pr-12 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500"
+          className="w-full bg-zinc-950/60 border border-zinc-700/70 rounded-xl pl-11 pr-12 py-2.5 text-base sm:text-sm text-zinc-100 focus:outline-none focus:border-emerald-500"
           required
           minLength={8}
           maxLength={128}

@@ -130,7 +130,7 @@ export default function RegisterPage() {
                   type="text"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="w-full px-4 py-2.5 pl-11 bg-zinc-800/60 border border-zinc-700/70 rounded-xl text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:bg-zinc-800 transition-all duration-200 placeholder:text-zinc-600 text-sm"
+                  className="w-full px-4 py-2.5 pl-11 bg-zinc-800/60 border border-zinc-700/70 rounded-xl text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:bg-zinc-800 transition-all duration-200 placeholder:text-zinc-600 text-base sm:text-sm"
                   placeholder="Seu nome"
                   required
                   minLength={2}
@@ -159,7 +159,7 @@ export default function RegisterPage() {
                   onChange={(e) =>
                     setWhatsappPhone(formatBrazilianWhatsApp(e.target.value))
                   }
-                  className="w-full px-4 py-2.5 pl-11 bg-zinc-800/60 border border-zinc-700/70 rounded-xl text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:bg-zinc-800 transition-all duration-200 placeholder:text-zinc-600 text-sm"
+                  className="w-full px-4 py-2.5 pl-11 bg-zinc-800/60 border border-zinc-700/70 rounded-xl text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:bg-zinc-800 transition-all duration-200 placeholder:text-zinc-600 text-base sm:text-sm"
                   placeholder="+55 (15) 99999-9999"
                   required
                   maxLength={19}
@@ -186,7 +186,7 @@ export default function RegisterPage() {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-4 py-2.5 pl-11 bg-zinc-800/60 border border-zinc-700/70 rounded-xl text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:bg-zinc-800 transition-all duration-200 placeholder:text-zinc-600 text-sm"
+                  className="w-full px-4 py-2.5 pl-11 bg-zinc-800/60 border border-zinc-700/70 rounded-xl text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:bg-zinc-800 transition-all duration-200 placeholder:text-zinc-600 text-base sm:text-sm"
                   placeholder="seu@email.com"
                   required
                   minLength={5}
@@ -213,7 +213,7 @@ export default function RegisterPage() {
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-4 py-2.5 pl-11 pr-12 bg-zinc-800/60 border border-zinc-700/70 rounded-xl text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:bg-zinc-800 transition-all duration-200 placeholder:text-zinc-600 text-sm"
+                  className="w-full px-4 py-2.5 pl-11 pr-12 bg-zinc-800/60 border border-zinc-700/70 rounded-xl text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:bg-zinc-800 transition-all duration-200 placeholder:text-zinc-600 text-base sm:text-sm"
                   placeholder="••••••••"
                   required
                   minLength={8}
@@ -250,7 +250,7 @@ export default function RegisterPage() {
                   type={showConfirmPassword ? "text" : "password"}
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full px-4 py-2.5 pl-11 pr-12 bg-zinc-800/60 border border-zinc-700/70 rounded-xl text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:bg-zinc-800 transition-all duration-200 placeholder:text-zinc-600 text-sm"
+                  className="w-full px-4 py-2.5 pl-11 pr-12 bg-zinc-800/60 border border-zinc-700/70 rounded-xl text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:bg-zinc-800 transition-all duration-200 placeholder:text-zinc-600 text-base sm:text-sm"
                   placeholder="••••••••"
                   required
                   minLength={8}
