@@ -308,12 +308,19 @@ def build_deterministic_alerts(
     return alerts
 
 
-def calculate_financial_health(summary: FinancialSummary) -> FinancialHealth:
+def calculate_financial_health(
+    summary: FinancialSummary,
+    profile: FinancialProfile | None = None,
+) -> FinancialHealth:
     if summary.transaction_count == 0:
+        score = 35 if profile and profile.has_debts else 45
         return FinancialHealth(
             level="attention",
-            score=50,
-            explanation="Ainda faltam movimentações para uma avaliação confiável.",
+            score=score,
+            explanation=(
+                "Ainda faltam movimentações para uma avaliação confiável; "
+                "a pontuação permanece limitada enquanto o histórico é insuficiente."
+            ),
         )
     score = 100
     reasons: list[str] = []
@@ -336,10 +343,52 @@ def calculate_financial_health(summary: FinancialSummary) -> FinancialHealth:
         reasons.append("as despesas cresceram em relação ao mês anterior")
     if summary.active_goals_count == 0:
         score -= 5
+        reasons.append("não há metas ativas registradas")
+
+    uncategorized = next(
+        (
+            item
+            for item in summary.category_distribution
+            if item.category.casefold() == "sem categoria"
+        ),
+        None,
+    )
+    if uncategorized is not None and uncategorized.percentage >= 30:
+        score -= 15
+        score = min(score, 65)
+        reasons.append("muitos gastos ainda estão sem categoria")
+
+    active_months = sum(
+        point.income > 0 or point.expense > 0
+        for point in summary.monthly_history
+    )
+    if summary.transaction_count < 5:
+        score = min(score, 55)
+        reasons.append("há pouco histórico de movimentações")
+    elif summary.transaction_count < 10 or active_months < 3:
+        score = min(score, 70)
+        reasons.append("o histórico ainda é curto")
+
+    has_reserve = any(
+        "reserva" in goal.name.casefold() and goal.current_amount > 0
+        for goal in summary.goals
+    )
+    if not has_reserve:
+        score -= 10
+        score = min(score, 85)
+        reasons.append("não há reserva de emergência identificada")
+    if profile is not None and profile.has_debts:
+        score -= 15
+        score = min(score, 60)
+        reasons.append("há dívidas declaradas no perfil")
+
     score = max(0, min(100, score))
     if score >= THRESHOLDS.good_health_score:
         level = "good"
-        explanation = "Os registros atuais indicam equilíbrio financeiro."
+        explanation = (
+            "Os registros atuais indicam equilíbrio financeiro, considerando "
+            "as limitações do histórico disponível."
+        )
     elif score >= THRESHOLDS.attention_health_score:
         level = "attention"
         explanation = "Há pontos que merecem acompanhamento: " + "; ".join(reasons)

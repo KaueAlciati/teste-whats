@@ -253,8 +253,36 @@ export type InsightsAnalysis = {
     available: boolean;
     message: string;
     updated_at: string | null;
-    sources: string[];
+    cached: boolean;
+    selic: MarketRateIndicator;
+    cdi: MarketRateIndicator;
+    ipca: MarketRateIndicator;
+    savings: MarketRateIndicator;
+    treasury_selic: {
+      status: "available" | "unavailable";
+      title: string | null;
+      maturity_date: string | null;
+      rate: number | null;
+      unit: string;
+      reference_period: string | null;
+      source: MarketSource;
+      message: string | null;
+    };
   };
+};
+
+type MarketSource = {
+  name: string;
+  url: string;
+};
+
+type MarketRateIndicator = {
+  status: "available" | "unavailable";
+  value: number | null;
+  unit: string;
+  reference_period: string | null;
+  source: MarketSource;
+  message: string | null;
 };
 
 export type DashboardInsight = {

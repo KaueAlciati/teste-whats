@@ -60,6 +60,10 @@ const DATE = new Intl.DateTimeFormat("pt-BR", {
   month: "long",
   year: "numeric",
 });
+const DATE_TIME = new Intl.DateTimeFormat("pt-BR", {
+  dateStyle: "short",
+  timeStyle: "short",
+});
 const CHART_COLORS = [
   "#1BAF80",
   "#7562EF",
@@ -449,18 +453,118 @@ export default function InsightsPage() {
 
         <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6">
           <SectionTitle icon={<Clock3 size={19} />} title="Mercado atual" />
-          <p className="mt-3 text-sm text-zinc-400">
-            {analysis.market.message}
-          </p>
-          <p className="mt-2 text-xs text-zinc-600">
-            Nenhum indicador atual é simulado. Esta seção só exibirá
-            informações quando houver integração estável com fontes oficiais e
-            data de atualização.
+          <p className="mt-3 text-sm text-zinc-400">{analysis.market.message}</p>
+
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <MarketRateCard label="Selic" indicator={analysis.market.selic} />
+            <MarketRateCard label="CDI / Taxa DI" indicator={analysis.market.cdi} />
+            <MarketRateCard label="IPCA 12 meses" indicator={analysis.market.ipca} />
+            <MarketRateCard label="Poupança" indicator={analysis.market.savings} />
+          </div>
+
+          <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                  Tesouro Selic
+                </p>
+                {analysis.market.treasury_selic.status === "available" ? (
+                  <>
+                    <p className="mt-1 text-base font-semibold text-zinc-100">
+                      {analysis.market.treasury_selic.title} · vencimento{" "}
+                      {analysis.market.treasury_selic.maturity_date
+                        ? DATE.format(
+                            new Date(
+                              `${analysis.market.treasury_selic.maturity_date}T12:00:00`,
+                            ),
+                          )
+                        : "não informado"}
+                    </p>
+                    <p className="mt-1 text-xl font-bold text-emerald-400">
+                      {formatRate(analysis.market.treasury_selic.rate)}{" "}
+                      {analysis.market.treasury_selic.unit}
+                    </p>
+                  </>
+                ) : (
+                  <p className="mt-2 text-sm text-amber-300">Indisponível</p>
+                )}
+              </div>
+              <MarketSourceLink source={analysis.market.treasury_selic.source} />
+            </div>
+            <p className="mt-2 text-xs text-zinc-500">
+              {analysis.market.treasury_selic.message ||
+                `Referência: ${analysis.market.treasury_selic.reference_period || "não informada"}`}
+            </p>
+          </div>
+
+          <p className="mt-4 text-xs text-zinc-500">
+            Atualizado em{" "}
+            {analysis.market.updated_at
+              ? DATE_TIME.format(new Date(analysis.market.updated_at))
+              : "data indisponível"}
+            {analysis.market.cached ? " · dados em cache" : ""}. Indicadores
+            indisponíveis não são estimados pela IA.
           </p>
         </section>
       </main>
     </AppLayout>
   );
+}
+
+
+function MarketRateCard({
+  label,
+  indicator,
+}: {
+  label: string;
+  indicator: InsightsAnalysis["market"]["selic"];
+}) {
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
+      <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+        {label}
+      </p>
+      {indicator.status === "available" ? (
+        <p className="mt-2 text-xl font-bold text-emerald-400">
+          {formatRate(indicator.value)} {indicator.unit}
+        </p>
+      ) : (
+        <p className="mt-2 text-sm font-medium text-amber-300">Indisponível</p>
+      )}
+      <p className="mt-2 min-h-8 text-xs text-zinc-500">
+        {indicator.message ||
+          `Referência: ${indicator.reference_period || "não informada"}`}
+      </p>
+      <div className="mt-3">
+        <MarketSourceLink source={indicator.source} />
+      </div>
+    </div>
+  );
+}
+
+function MarketSourceLink({
+  source,
+}: {
+  source: InsightsAnalysis["market"]["selic"]["source"];
+}) {
+  return (
+    <a
+      href={source.url}
+      target="_blank"
+      rel="noreferrer"
+      className="text-xs text-emerald-400 transition hover:text-emerald-300"
+    >
+      Fonte: {source.name}
+    </a>
+  );
+}
+
+function formatRate(value: number | null) {
+  if (value === null) return "—";
+  return new Intl.NumberFormat("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  }).format(value);
 }
 
 

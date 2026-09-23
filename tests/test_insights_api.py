@@ -1,6 +1,6 @@
 import os
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -19,7 +19,13 @@ from backend.models import (
     GoalContribution,
     User,
 )
-from backend.schemas.insights import AIInsightsContent
+from backend.schemas.insights import (
+    AIInsightsContent,
+    MarketAnalysisState,
+    MarketRateIndicator,
+    MarketSource,
+    TreasurySelicIndicator,
+)
 from backend.services.auth_service import create_access_token
 from backend.services.insights_ai_service import InsightsAIServiceError
 from backend.services.insights_calculation_service import (
@@ -54,6 +60,11 @@ class InsightsApiTestCase(unittest.TestCase):
             },
         )
         self.environment.start()
+        self.market = patch(
+            "backend.services.insights_service.get_market_analysis",
+            return_value=self._market_state(),
+        )
+        self.market.start()
         with self.session_factory() as db:
             self.user = self._user(db, "user@example.com", "5515999999999")
             self.other_user = self._user(
@@ -68,6 +79,7 @@ class InsightsApiTestCase(unittest.TestCase):
     def tearDown(self) -> None:
         self.client.close()
         app.dependency_overrides.clear()
+        self.market.stop()
         self.environment.stop()
         Base.metadata.drop_all(self.engine)
         self.engine.dispose()
@@ -226,7 +238,8 @@ class InsightsApiTestCase(unittest.TestCase):
         self.assertEqual(summary["total_saved_in_goals"], 300.0)
         self.assertEqual(summary["total_remaining_in_goals"], 700.0)
         self.assertEqual(summary["average_goal_contribution"], 150.0)
-        self.assertEqual(body["market"]["available"], False)
+        self.assertEqual(body["market"]["selic"]["value"], 13.75)
+        self.assertEqual(body["market"]["cdi"]["status"], "unavailable")
         self.assertEqual(body["ai"]["content"]["financial_summary"], "Resumo")
         ai_mock.assert_called_once()
 
@@ -293,6 +306,42 @@ class InsightsApiTestCase(unittest.TestCase):
         self.assertIsNone(summary.expense_change_percentage)
         self.assertIsNone(summary.estimated_monthly_savings_capacity)
 
+    def test_health_and_ai_guardrails_cover_limited_uncategorized_data(self) -> None:
+        self._create_profile(self.token)
+        with self.session_factory() as db:
+            self._transaction(
+                db,
+                user_id=self.user.id,
+                transaction_type="expense",
+                amount="100.00",
+                description="Compra",
+                transaction_date=date.today(),
+            )
+        unsafe = self._ai_content().model_copy(
+            update={
+                "cut_suggestions": ["Corte 100% de Sem categoria."],
+                "next_steps": ["Invista agora"],
+            }
+        )
+
+        with patch(
+            "backend.services.insights_service.generate_ai_insights",
+            return_value=unsafe,
+        ):
+            response = self.client.get(
+                "/api/insights",
+                headers=self._headers(self.token),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertLessEqual(body["health"]["score"], 55)
+        cuts = body["ai"]["content"]["cut_suggestions"]
+        self.assertIn("Classifique primeiro", cuts[0])
+        self.assertNotIn("100%", " ".join(cuts))
+        steps = body["ai"]["content"]["next_steps"]
+        self.assertIn("Classificar", steps[0])
+
     def test_analysis_requires_completed_profile(self) -> None:
         response = self.client.get(
             "/api/insights",
@@ -337,6 +386,60 @@ class InsightsApiTestCase(unittest.TestCase):
             prioritization="Prioridade",
             goals_analysis="Metas",
             next_steps=["Passo 1", "Passo 2", "Passo 3"],
+        )
+
+    @staticmethod
+    def _market_state() -> MarketAnalysisState:
+        bcb = MarketSource(
+            name="Banco Central do Brasil",
+            url="https://bcb.gov.br",
+        )
+        return MarketAnalysisState(
+            available=True,
+            message="Indicadores oficiais carregados.",
+            updated_at=datetime(2026, 9, 23, tzinfo=timezone.utc),
+            cached=False,
+            selic=MarketRateIndicator(
+                status="available",
+                value=13.75,
+                unit="% a.a.",
+                reference_period="2026-09-23",
+                source=bcb,
+            ),
+            cdi=MarketRateIndicator(
+                status="unavailable",
+                value=None,
+                unit="% a.a.",
+                reference_period=None,
+                source=MarketSource(name="B3", url="https://b3.com.br"),
+                message="Indisponível",
+            ),
+            ipca=MarketRateIndicator(
+                status="available",
+                value=4.5,
+                unit="% em 12 meses",
+                reference_period="agosto 2026",
+                source=MarketSource(name="IBGE", url="https://ibge.gov.br"),
+            ),
+            savings=MarketRateIndicator(
+                status="available",
+                value=0.67,
+                unit="% a.m.",
+                reference_period="2026-09-23",
+                source=bcb,
+            ),
+            treasury_selic=TreasurySelicIndicator(
+                status="available",
+                title="Tesouro Selic",
+                maturity_date=date(2029, 3, 1),
+                rate=0.05,
+                unit="% a.a.",
+                reference_period="2026-09-23",
+                source=MarketSource(
+                    name="Tesouro Transparente",
+                    url="https://tesourotransparente.gov.br",
+                ),
+            ),
         )
 
     @staticmethod

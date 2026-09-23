@@ -10,9 +10,9 @@ from backend.schemas.insights import (
     AIInsightsContent,
     AIInsightsState,
     DashboardInsightResponse,
+    FinancialSummary,
     FinancialProfileResponse,
     InsightsAnalysisResponse,
-    MarketAnalysisState,
 )
 from backend.services.insights_ai_service import (
     InsightsAIServiceError,
@@ -24,10 +24,10 @@ from backend.services.insights_calculation_service import (
     calculate_financial_health,
     calculate_financial_summary,
 )
+from backend.services.market_data_service import get_market_analysis
 
 
 AI_CACHE_TTL = timedelta(hours=6)
-MARKET_UNAVAILABLE_MESSAGE = "Análise de mercado atual ainda não disponível."
 
 
 def build_insights_analysis(
@@ -46,9 +46,13 @@ def build_insights_analysis(
         current_date=current_date,
     )
     alerts = build_deterministic_alerts(summary)
-    health = calculate_financial_health(summary)
+    health = calculate_financial_health(summary, profile)
     possibilities = build_financial_possibilities(profile, summary)
     profile_response = financial_profile_response(profile)
+    market = get_market_analysis(
+        force_refresh=force_refresh,
+        current_time=now,
+    )
     ai_payload = {
         "financial_profile": _profile_payload(profile),
         "financial_summary": summary.model_dump(mode="json"),
@@ -75,6 +79,7 @@ def build_insights_analysis(
         "deterministic_alerts": [
             item.model_dump(mode="json") for item in alerts
         ],
+        "market_data": market.model_dump(mode="json", exclude={"cached"}),
     }
     fingerprint = _payload_fingerprint(ai_payload)
     cached_content = _cached_ai_content(
@@ -94,7 +99,11 @@ def build_insights_analysis(
         )
     else:
         try:
-            content = generate_ai_insights(ai_payload)
+            content = _apply_insight_guardrails(
+                generate_ai_insights(ai_payload),
+                profile=profile,
+                summary=summary,
+            )
             profile.analysis_cache = {
                 "fingerprint": fingerprint,
                 "content": content.model_dump(mode="json"),
@@ -141,12 +150,7 @@ def build_insights_analysis(
         alerts=alerts,
         possibilities=possibilities,
         ai=ai_state,
-        market=MarketAnalysisState(
-            available=False,
-            message=MARKET_UNAVAILABLE_MESSAGE,
-            updated_at=None,
-            sources=[],
-        ),
+        market=market,
     )
 
 
@@ -261,3 +265,93 @@ def _cached_ai_content(
         return AIInsightsContent.model_validate(cache.get("content"))
     except (TypeError, ValueError):
         return None
+
+
+def _apply_insight_guardrails(
+    content: AIInsightsContent,
+    *,
+    profile: FinancialProfile,
+    summary: FinancialSummary,
+) -> AIInsightsContent:
+    uncategorized = next(
+        (
+            item
+            for item in summary.category_distribution
+            if item.category.casefold() == "sem categoria"
+        ),
+        None,
+    )
+    safe_cuts = [
+        suggestion
+        for suggestion in content.cut_suggestions
+        if not _suggests_total_cut(suggestion)
+    ]
+    if uncategorized is not None and uncategorized.amount > 0:
+        classification = (
+            "Classifique primeiro os gastos em Sem categoria antes de decidir "
+            "qual redução é adequada."
+        )
+        safe_cuts = [classification] + [
+            suggestion
+            for suggestion in safe_cuts
+            if "sem categoria" not in suggestion.casefold()
+        ]
+    if not safe_cuts and summary.current_month_expenses > 0:
+        safe_cuts = [
+            "Revise despesas não essenciais e teste uma redução gradual, sem "
+            "eliminar integralmente uma categoria."
+        ]
+
+    steps: list[str] = []
+    if uncategorized is not None and uncategorized.amount > 0:
+        steps.append("Classificar as movimentações que estão em Sem categoria.")
+    elif summary.transaction_count < 10:
+        steps.append("Registrar mais movimentações para melhorar a qualidade da análise.")
+    if profile.has_debts:
+        steps.append("Organizar o orçamento e priorizar as dívidas mais caras.")
+    else:
+        steps.append("Revisar o orçamento mensal e definir limites realistas.")
+    has_reserve = any(
+        "reserva" in goal.name.casefold() and goal.current_amount > 0
+        for goal in summary.goals
+    )
+    if not has_reserve:
+        steps.append("Começar uma reserva de emergência com liquidez adequada.")
+    if summary.active_goals_count > 0:
+        steps.append("Revisar o prazo e o ritmo de aporte das metas ativas.")
+    else:
+        steps.append("Criar uma meta financeira compatível com o orçamento.")
+    if not profile.has_debts and has_reserve:
+        steps.append(
+            "Só então estudar alternativas de investimento compatíveis com prazo, "
+            "liquidez e risco."
+        )
+
+    return content.model_copy(
+        update={
+            "cut_suggestions": safe_cuts,
+            "prioritization": (
+                "Priorize nesta ordem: qualidade dos dados, orçamento e dívidas, "
+                "reserva de emergência, metas e, por último, investimentos."
+            ),
+            "next_steps": steps[:5],
+        }
+    )
+
+
+def _suggests_total_cut(text: str) -> bool:
+    normalized = text.casefold()
+    return any(
+        marker in normalized
+        for marker in (
+            "100%",
+            "100 %",
+            "eliminar a categoria",
+            "elimine a categoria",
+            "zerar a categoria",
+            "zere a categoria",
+            "cortar tudo",
+            "corte todo",
+            "corte toda",
+        )
+    )

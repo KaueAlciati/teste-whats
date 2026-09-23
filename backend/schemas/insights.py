@@ -160,11 +160,41 @@ class AIInsightsState(BaseModel):
     content: AIInsightsContent | None
 
 
+class MarketSource(BaseModel):
+    name: str
+    url: str
+
+
+class MarketRateIndicator(BaseModel):
+    status: Literal["available", "unavailable"]
+    value: float | None
+    unit: str
+    reference_period: str | None
+    source: MarketSource
+    message: str | None = None
+
+
+class TreasurySelicIndicator(BaseModel):
+    status: Literal["available", "unavailable"]
+    title: str | None
+    maturity_date: date | None
+    rate: float | None
+    unit: str
+    reference_period: str | None
+    source: MarketSource
+    message: str | None = None
+
+
 class MarketAnalysisState(BaseModel):
     available: bool
     message: str
     updated_at: datetime | None
-    sources: list[str]
+    cached: bool = False
+    selic: MarketRateIndicator
+    cdi: MarketRateIndicator
+    ipca: MarketRateIndicator
+    savings: MarketRateIndicator
+    treasury_selic: TreasurySelicIndicator
 
 
 class InsightsAnalysisResponse(BaseModel):
