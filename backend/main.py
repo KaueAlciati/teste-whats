@@ -8,6 +8,8 @@ from backend.api.dashboard import router as dashboard_router
 from backend.api.goals import router as goals_router
 from backend.api.health import router as health_router
 from backend.api.insights import router as insights_router
+from backend.api.notifications import router as notifications_router
+from backend.api.settings import router as settings_router
 from backend.api.transactions import router as transactions_router
 from backend.api.webhook import router as webhook_router
 
@@ -38,6 +40,8 @@ app.include_router(auth_router)
 app.include_router(dashboard_router)
 app.include_router(goals_router)
 app.include_router(insights_router)
+app.include_router(settings_router)
+app.include_router(notifications_router)
 app.include_router(transactions_router)
 
 

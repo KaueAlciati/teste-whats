@@ -4,6 +4,7 @@ from backend.models.financial_profile import FinancialProfile
 from backend.models.goal import Goal
 from backend.models.goal_context import GoalContext
 from backend.models.goal_contribution import GoalContribution
+from backend.models.notification import Notification
 from backend.models.pending_audio_confirmation import PendingAudioConfirmation
 from backend.models.pending_receipt import PendingReceipt
 from backend.models.password_reset_token import PasswordResetToken
@@ -17,6 +18,7 @@ __all__ = [
     "Goal",
     "GoalContext",
     "GoalContribution",
+    "Notification",
     "PendingAudioConfirmation",
     "PendingReceipt",
     "PasswordResetToken",

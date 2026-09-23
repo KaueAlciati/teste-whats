@@ -332,6 +332,7 @@ export type UserSettings = {
   theme: string;
   notifications_enabled: boolean;
   ai_enabled: boolean;
+  critical_spending_alerts_enabled: boolean;
   updated_at: string;
 };
 

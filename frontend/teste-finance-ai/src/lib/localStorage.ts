@@ -844,6 +844,7 @@ const localStorageBackend = {
         theme: "dark",
         notifications_enabled: true,
         ai_enabled: true,
+        critical_spending_alerts_enabled: false,
         updated_at: new Date().toISOString(),
       }
     );
@@ -859,6 +860,7 @@ const localStorageBackend = {
       theme: "dark",
       notifications_enabled: true,
       ai_enabled: true,
+      critical_spending_alerts_enabled: false,
       updated_at: new Date().toISOString(),
     };
     const updated = { ...current, ...data, updated_at: new Date().toISOString() };

@@ -18,10 +18,12 @@ from backend.models import (
     Goal,
     GoalContext,
     GoalContribution,
+    Notification,
     PendingAudioConfirmation,
     PendingReceipt,
     User,
 )
+from backend.services.financial_service import create_transaction
 
 
 class SettingsApiTestCase(unittest.TestCase):
@@ -80,6 +82,109 @@ class SettingsApiTestCase(unittest.TestCase):
         self.assertFalse(body["whatsapp_verified"])
         self.assertIn("created_at", body)
         self.assertNotIn("password_hash", body)
+
+    def test_critical_spending_alert_preference_is_persisted_and_isolated(self) -> None:
+        initial = self.client.get(
+            "/api/settings",
+            headers=self.user_a["headers"],
+        )
+        enabled = self.client.put(
+            "/api/settings",
+            headers=self.user_a["headers"],
+            json={"critical_spending_alerts_enabled": True},
+        )
+        user_a = self.client.get(
+            "/api/settings",
+            headers=self.user_a["headers"],
+        )
+        user_b = self.client.get(
+            "/api/settings",
+            headers=self.user_b["headers"],
+        )
+
+        self.assertEqual(initial.status_code, 200)
+        self.assertFalse(initial.json()["critical_spending_alerts_enabled"])
+        self.assertEqual(enabled.status_code, 200)
+        self.assertTrue(user_a.json()["critical_spending_alerts_enabled"])
+        self.assertFalse(user_b.json()["critical_spending_alerts_enabled"])
+
+        with self.session_factory() as db:
+            persisted = db.get(User, self.user_a["id"])
+            self.assertTrue(persisted.critical_spending_alerts_enabled)
+
+    def test_notifications_feed_and_bell_use_authenticated_user(self) -> None:
+        for account in (self.user_a, self.user_b):
+            response = self.client.put(
+                "/api/settings",
+                headers=account["headers"],
+                json={"critical_spending_alerts_enabled": True},
+            )
+            self.assertEqual(response.status_code, 200)
+
+        with self.session_factory() as db:
+            for account in (self.user_a, self.user_b):
+                create_transaction(
+                    db,
+                    user_id=account["id"],
+                    type="income",
+                    amount=Decimal("1000.00"),
+                    description="Renda",
+                    transaction_date=date.today(),
+                    source="dashboard_manual",
+                )
+                create_transaction(
+                    db,
+                    user_id=account["id"],
+                    type="expense",
+                    amount=Decimal("800.00"),
+                    description="Despesa",
+                    transaction_date=date.today(),
+                    source="dashboard_manual",
+                )
+            other_notification = db.scalar(
+                select(Notification).where(
+                    Notification.user_id == self.user_b["id"]
+                )
+            )
+
+        unread = self.client.get(
+            "/api/notifications",
+            params={"status": "unread", "page_size": 100},
+            headers=self.user_a["headers"],
+        )
+        self.assertEqual(unread.status_code, 200)
+        self.assertEqual(unread.json()["total"], 2)
+        self.assertTrue(
+            all(
+                item["category"] == "financeiro"
+                for item in unread.json()["items"]
+            )
+        )
+
+        rejected = self.client.post(
+            f"/api/notifications/{other_notification.id}/read",
+            headers=self.user_a["headers"],
+        )
+        self.assertEqual(rejected.status_code, 404)
+
+        own_id = unread.json()["items"][0]["id"]
+        marked = self.client.post(
+            f"/api/notifications/{own_id}/read",
+            headers=self.user_a["headers"],
+        )
+        self.assertEqual(marked.status_code, 200)
+
+        marked_all = self.client.post(
+            "/api/notifications/read-all",
+            headers=self.user_a["headers"],
+        )
+        self.assertEqual(marked_all.status_code, 200)
+        after = self.client.get(
+            "/api/notifications",
+            params={"status": "unread"},
+            headers=self.user_a["headers"],
+        )
+        self.assertEqual(after.json()["total"], 0)
 
     def test_edit_name_and_email(self) -> None:
         response = self.client.put(

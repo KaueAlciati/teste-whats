@@ -1,6 +1,6 @@
 "use client";
 
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { useToast } from "@/contexts/ToastContext";
 import { notificationsService } from "../service";
@@ -16,6 +16,7 @@ export function useNotificationsQuery(
   options: UseNotificationsQueryOptions = {},
 ) {
   const { addToast } = useToast();
+  const queryClient = useQueryClient();
   const toastOnError = options.toastOnError ?? true;
   const hasNotifiedRef = useRef(false);
 
@@ -24,7 +25,18 @@ export function useNotificationsQuery(
     queryFn: async () => notificationsService.list(params),
     placeholderData: keepPreviousData,
     retry: 1,
+    refetchInterval: 30_000,
   });
+
+  useEffect(() => {
+    const refresh = () => {
+      void queryClient.invalidateQueries({
+        queryKey: notificationQueryKeys.all,
+      });
+    };
+    window.addEventListener("transactions-changed", refresh);
+    return () => window.removeEventListener("transactions-changed", refresh);
+  }, [queryClient]);
 
   useEffect(() => {
     if (!toastOnError) return;

@@ -39,6 +39,12 @@ class User(Base):
         default=True,
         server_default="true",
     )
+    critical_spending_alerts_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -80,6 +86,10 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    notifications: Mapped[list["Notification"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 
 from backend.models.category import Category  # noqa: E402
@@ -87,5 +97,6 @@ from backend.models.financial_transaction import FinancialTransaction  # noqa: E
 from backend.models.financial_profile import FinancialProfile  # noqa: E402
 from backend.models.goal import Goal  # noqa: E402
 from backend.models.goal_contribution import GoalContribution  # noqa: E402
+from backend.models.notification import Notification  # noqa: E402
 from backend.models.password_reset_token import PasswordResetToken  # noqa: E402
 from backend.models.transaction_attachment import TransactionAttachment  # noqa: E402

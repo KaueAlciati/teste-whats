@@ -47,6 +47,9 @@ export default function SettingsPage() {
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const [savingPassword, setSavingPassword] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [criticalAlertsEnabled, setCriticalAlertsEnabled] = useState(false);
+  const [loadingCriticalAlerts, setLoadingCriticalAlerts] = useState(true);
+  const [savingCriticalAlerts, setSavingCriticalAlerts] = useState(false);
 
   const [clearing, setClearing] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -57,6 +60,50 @@ export default function SettingsPage() {
       setEmail(user.email);
     }
   }, [user]);
+
+  useEffect(() => {
+    let active = true;
+    api.getSettings()
+      .then((settings) => {
+        if (active) {
+          setCriticalAlertsEnabled(
+            settings.critical_spending_alerts_enabled,
+          );
+        }
+      })
+      .catch(() => {
+        if (active) {
+          addToast("error", "Não foi possível carregar a preferência de alertas.");
+        }
+      })
+      .finally(() => {
+        if (active) setLoadingCriticalAlerts(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [addToast]);
+
+  async function handleCriticalAlertsToggle() {
+    const nextValue = !criticalAlertsEnabled;
+    setSavingCriticalAlerts(true);
+    try {
+      const settings = await api.updateSettings({
+        critical_spending_alerts_enabled: nextValue,
+      });
+      setCriticalAlertsEnabled(settings.critical_spending_alerts_enabled);
+      addToast(
+        "success",
+        nextValue
+          ? "Alertas de gastos críticos ativados."
+          : "Alertas de gastos críticos desativados.",
+      );
+    } catch (error) {
+      await handleFetchError(error, "Erro ao atualizar alertas:");
+    } finally {
+      setSavingCriticalAlerts(false);
+    }
+  }
 
   async function handleSaveProfile(e: React.FormEvent) {
     e.preventDefault();
@@ -310,9 +357,10 @@ export default function SettingsPage() {
             <div className="divide-y divide-zinc-800/70">
               <ToggleItem
                 title="Alertas de Gastos Críticos"
-                description="Configuração disponível futuramente."
-                checked={false}
-                disabled
+                description="Avisos determinísticos quando os gastos comprometem sua renda."
+                checked={criticalAlertsEnabled}
+                disabled={loadingCriticalAlerts || savingCriticalAlerts}
+                onToggle={handleCriticalAlertsToggle}
               />
               <ToggleItem
                 title="Preferências de IA"

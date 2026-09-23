@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from backend.models.category import Category
 from backend.models.financial_transaction import FinancialTransaction
 from backend.services.attachment_service import delete_stored_file_if_unreferenced
+from backend.services.spending_alert_service import evaluate_spending_alerts
 
 
 TRANSACTION_TYPES = {"expense", "income"}
@@ -85,11 +86,15 @@ def create_transaction(
     db.add(transaction)
 
     try:
+        db.flush()
+        evaluate_spending_alerts(
+            db,
+            user_id=user_id,
+            reference_date=transaction_date,
+        )
         if commit:
             db.commit()
             db.refresh(transaction)
-        else:
-            db.flush()
         return transaction
     except IntegrityError as exc:
         db.rollback()

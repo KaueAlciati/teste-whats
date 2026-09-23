@@ -13,6 +13,7 @@ from backend.models import (  # noqa: F401
     Goal,
     GoalContext,
     GoalContribution,
+    Notification,
     PendingAudioConfirmation,
     PendingReceipt,
     TransactionAttachment,
