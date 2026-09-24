@@ -7,10 +7,12 @@ from backend.models.financial_transaction import FinancialTransaction
 from backend.models.goal import Goal
 from backend.models.goal_context import GoalContext
 from backend.models.goal_contribution import GoalContribution
+from backend.models.intent_clarification import IntentClarification
 from backend.models.notification import Notification
 from backend.models.pending_audio_confirmation import PendingAudioConfirmation
 from backend.models.pending_receipt import PendingReceipt
 from backend.models.user import User
+from backend.models.unrecognized_message import UnrecognizedMessage
 from backend.services.attachment_service import (
     delete_stored_file,
     remove_user_attachments,
@@ -21,6 +23,7 @@ def clear_financial_history(db: Session, *, user_id: int) -> None:
     """Remove only financial records owned by the authenticated user."""
     attachment_keys = remove_user_attachments(db, user_id=user_id)
     _delete_financial_records(db, user_id=user_id)
+    _delete_intent_records(db, user_id=user_id)
 
     profile = db.query(FinancialProfile).filter_by(user_id=user_id).one_or_none()
     if profile is not None:
@@ -37,6 +40,7 @@ def delete_user_account(db: Session, *, user: User) -> None:
     user_id = user.id
     attachment_keys = remove_user_attachments(db, user_id=user_id)
     _delete_financial_records(db, user_id=user_id)
+    _delete_intent_records(db, user_id=user_id)
     db.execute(delete(FinancialProfile).where(FinancialProfile.user_id == user_id))
     db.delete(user)
     db.commit()
@@ -63,3 +67,16 @@ def _delete_financial_records(db: Session, *, user_id: int) -> None:
         Category,
     ):
         db.execute(delete(model).where(model.user_id == user_id))
+
+
+def _delete_intent_records(db: Session, *, user_id: int) -> None:
+    db.execute(
+        delete(IntentClarification).where(
+            IntentClarification.user_id == user_id
+        )
+    )
+    db.execute(
+        delete(UnrecognizedMessage).where(
+            UnrecognizedMessage.user_id == user_id
+        )
+    )

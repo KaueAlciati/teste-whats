@@ -4,11 +4,14 @@ from backend.models.financial_profile import FinancialProfile
 from backend.models.goal import Goal
 from backend.models.goal_context import GoalContext
 from backend.models.goal_contribution import GoalContribution
+from backend.models.intent_clarification import IntentClarification
+from backend.models.intent_example import IntentExample
 from backend.models.notification import Notification
 from backend.models.pending_audio_confirmation import PendingAudioConfirmation
 from backend.models.pending_receipt import PendingReceipt
 from backend.models.password_reset_token import PasswordResetToken
 from backend.models.transaction_attachment import TransactionAttachment
+from backend.models.unrecognized_message import UnrecognizedMessage
 from backend.models.user import User
 
 __all__ = [
@@ -18,10 +21,13 @@ __all__ = [
     "Goal",
     "GoalContext",
     "GoalContribution",
+    "IntentClarification",
+    "IntentExample",
     "Notification",
     "PendingAudioConfirmation",
     "PendingReceipt",
     "PasswordResetToken",
     "TransactionAttachment",
+    "UnrecognizedMessage",
     "User",
 ]

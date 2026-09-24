@@ -13,6 +13,7 @@ from backend.database.connection import SessionLocal, engine
 from backend.models.financial_transaction import FinancialTransaction
 from backend.models.user import User
 from backend.schemas.financial_intent import FinancialIntent, FinancialPeriod
+from backend.schemas.natural_intent import NaturalIntentDecision
 from backend.services.ai_financial_service import (
     FinancialAIServiceError,
     interpret_financial_message,
@@ -59,6 +60,21 @@ from backend.services.financial_service import (
     update_transaction,
 )
 from backend.services.goal_whatsapp_service import handle_goal_whatsapp_message
+from backend.services.intent_clarification_service import (
+    begin_intent_clarification,
+    record_unrecognized_message,
+    resolve_intent_clarification,
+)
+from backend.services.intent_router_service import (
+    CLARIFICATION_CONFIDENCE_THRESHOLD,
+    HIGH_CONFIDENCE_THRESHOLD,
+    route_deterministic_intent,
+    route_natural_intent,
+    should_preempt_existing_financial_router,
+)
+from backend.services.natural_intent_execution_service import (
+    execute_natural_intent,
+)
 from backend.services.pending_audio_confirmation_service import (
     append_pending_audio_complement,
     create_pending_audio_confirmation,
@@ -252,6 +268,76 @@ def handle_financial_message(
     )
     variant = response_variant(whatsapp_message_id)
 
+    def present(response: str | None) -> str | None:
+        if response is None:
+            return None
+        if source == "whatsapp_audio" and audio_transcription:
+            return format_audio_understanding(
+                audio_transcription,
+                response,
+                variant=variant,
+            )
+        return response
+
+    if not skip_pending_context:
+        audio_pending_handled, audio_pending_response = _handle_pending_audio_reply(
+            db,
+            user=user,
+            text=text,
+            current_date=current_date,
+            current_time=processing_time,
+        )
+        if audio_pending_handled:
+            return audio_pending_response
+
+        pending_reply = handle_pending_receipt_reply(
+            db,
+            user=user,
+            text=text,
+            current_date=current_date,
+            current_time=processing_time,
+        )
+        if pending_reply.handled:
+            return pending_reply.response
+
+        clarified_intent = resolve_intent_clarification(
+            db,
+            user_id=user.id,
+            reply=text,
+            current_time=processing_time,
+        )
+        if clarified_intent is not None:
+            return present(
+                execute_natural_intent(
+                    db,
+                    user=user,
+                    decision=clarified_intent,
+                    original_text=text,
+                    current_date=current_date,
+                    current_time=processing_time,
+                )
+            )
+
+    goal_handled, goal_response = handle_goal_whatsapp_message(
+        db,
+        user=user,
+        text=text,
+        source=source,
+        current_time=processing_time,
+    )
+    if goal_handled:
+        if (
+            goal_response
+            and source == "whatsapp_audio"
+            and audio_transcription
+        ):
+            return format_audio_understanding(
+                audio_transcription,
+                goal_response,
+                variant=variant,
+            )
+        return goal_response
+
     statement_request = resolve_whatsapp_statement_request(
         text,
         current_date=current_date,
@@ -275,46 +361,28 @@ def handle_financial_message(
             )
         return exported
 
-    if not skip_pending_context:
-        audio_pending_handled, audio_pending_response = _handle_pending_audio_reply(
-            db,
-            user=user,
-            text=text,
-            current_date=current_date,
-            current_time=processing_time,
-        )
-        if audio_pending_handled:
-            return audio_pending_response
-
-        pending_reply = handle_pending_receipt_reply(
-            db,
-            user=user,
-            text=text,
-            current_date=current_date,
-            current_time=processing_time,
-        )
-        if pending_reply.handled:
-            return pending_reply.response
-
-    goal_handled, goal_response = handle_goal_whatsapp_message(
-        db,
-        user=user,
-        text=text,
-        source=source,
-        current_time=processing_time,
+    deterministic_natural_intent = route_deterministic_intent(
+        text,
+        current_date=current_date,
     )
-    if goal_handled:
-        if (
-            goal_response
-            and source == "whatsapp_audio"
-            and audio_transcription
-        ):
-            return format_audio_understanding(
-                audio_transcription,
-                goal_response,
+    if (
+        deterministic_natural_intent is not None
+        and should_preempt_existing_financial_router(
+            deterministic_natural_intent
+        )
+    ):
+        return present(
+            _natural_intent_response(
+                db,
+                user=user,
+                text=text,
+                source=source,
+                decision=deterministic_natural_intent,
+                current_date=current_date,
+                current_time=processing_time,
                 variant=variant,
             )
-        return goal_response
+        )
 
     latest_transaction = get_latest_transaction_for_user(
         db,
@@ -387,17 +455,6 @@ def handle_financial_message(
         return format_correction_clarification(
             "Não consegui aplicar essa correção ao áudio. Pode me dizer a movimentação completa?"
         )
-
-    def present(response: str | None) -> str | None:
-        if response is None:
-            return None
-        if source == "whatsapp_audio" and audio_transcription:
-            return format_audio_understanding(
-                audio_transcription,
-                response,
-                variant=variant,
-            )
-        return response
 
     if intent.needs_clarification:
         return present(
@@ -500,12 +557,83 @@ def handle_financial_message(
             )
         )
 
+    routed = route_natural_intent(
+        db,
+        text=text,
+        current_date=current_date,
+    )
     return present(
-        non_financial_response(
-            text,
-            user_name=user.name,
+        _natural_intent_response(
+            db,
+            user=user,
+            text=text,
+            source=source,
+            decision=routed.decision,
+            current_date=current_date,
+            current_time=processing_time,
             variant=variant,
         )
+    )
+
+
+def _natural_intent_response(
+    db: Session,
+    *,
+    user: User,
+    text: str,
+    source: str,
+    decision: NaturalIntentDecision | None,
+    current_date: date,
+    current_time: datetime,
+    variant: int,
+) -> str:
+    if (
+        decision is not None
+        and decision.intent != "unknown"
+        and decision.confidence >= HIGH_CONFIDENCE_THRESHOLD
+    ):
+        return execute_natural_intent(
+            db,
+            user=user,
+            decision=decision,
+            original_text=text,
+            current_date=current_date,
+            current_time=current_time,
+        )
+
+    if (
+        decision is not None
+        and decision.intent != "unknown"
+        and decision.confidence >= CLARIFICATION_CONFIDENCE_THRESHOLD
+    ):
+        begin_intent_clarification(
+            db,
+            user_id=user.id,
+            message=text,
+            source=source,
+            decision=decision,
+            current_time=current_time,
+        )
+        return decision.clarification_question or (
+            "Você pode explicar em uma frase curta o que deseja consultar?"
+        )
+
+    record_unrecognized_message(
+        db,
+        user_id=user.id,
+        message=text,
+        source=source,
+        detected_intent=(
+            decision.intent
+            if decision is not None and decision.intent != "unknown"
+            else None
+        ),
+        confidence=decision.confidence if decision is not None else None,
+    )
+    return non_financial_response(
+        text,
+        user_name=user.name,
+        variant=variant,
     )
 
 

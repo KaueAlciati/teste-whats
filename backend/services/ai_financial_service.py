@@ -113,6 +113,14 @@ Ações permitidas:
   "cancela o último";
 - unknown para mensagens não financeiras.
 
+Também retorne unknown, para que o roteador especializado trate depois, quando
+o usuário pedir maior gasto individual, categoria de maior gasto, gasto por
+categoria, últimas movimentações, análise/melhorias financeiras ou consultas
+naturais sobre metas. Não reduza esses pedidos a query_expenses ou query_income.
+Consultas de período que não cabem exatamente nos períodos permitidos acima,
+como anteontem, semana passada, últimos 7/15/30 dias ou um mês pelo nome, também
+devem retornar unknown para o parser determinístico calcular as datas.
+
 Em correções, preencha somente os campos que o usuário pediu para alterar e
 deixe os demais como null. O campo type aceita expense ou income. Só altere
 type quando a mensagem for explícita e a confiança for alta. A descrição da

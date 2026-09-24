@@ -13,10 +13,13 @@ from backend.models import (  # noqa: F401
     Goal,
     GoalContext,
     GoalContribution,
+    IntentClarification,
+    IntentExample,
     Notification,
     PendingAudioConfirmation,
     PendingReceipt,
     TransactionAttachment,
+    UnrecognizedMessage,
     User,
 )
 

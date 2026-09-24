@@ -62,6 +62,9 @@ def handle_goal_whatsapp_message(
     if _is_explicit_financial_transaction(normalized):
         return False, None
 
+    if _should_defer_to_natural_router(normalized):
+        return False, None
+
     if _is_goal_list_request(normalized):
         return True, _goals_list_response(
             db,
@@ -378,6 +381,18 @@ def _goal_from_command_or_context(
                     current_time=current_time,
                 )
                 return goal
+    named_target = re.search(r"\b(?:no|na)\s+(.+)$", normalized)
+    if named_target is not None:
+        requested_name = re.sub(r"^meta\s+", "", named_target.group(1)).strip()
+        goal = _find_goal_by_name(db, user_id=user_id, name=requested_name)
+        if goal is not None:
+            select_goal_context(
+                db,
+                user_id=user_id,
+                goal=goal,
+                current_time=current_time,
+            )
+            return goal
     return get_selected_goal(
         db,
         user_id=user_id,
@@ -589,7 +604,7 @@ def _is_create_goal_command(normalized: str) -> bool:
 
 
 def _is_add_contribution_command(normalized: str) -> bool:
-    return normalized.startswith(
+    starts_with_contribution_verb = normalized.startswith(
         (
             "adiciona ",
             "adicionar ",
@@ -599,7 +614,43 @@ def _is_add_contribution_command(normalized: str) -> bool:
             "guardar ",
             "guardei ",
         )
-    ) or normalized in {"adicionar", "adiciona", "aportar", "aporte"}
+    )
+    standalone_command = normalized in {
+        "adicionar",
+        "adiciona",
+        "aportar",
+        "aporte",
+    }
+    natural_command_with_amount = bool(
+        re.match(r"^(?:coloca|colocar)\s+.*\d", normalized)
+    )
+    return (
+        starts_with_contribution_verb
+        or standalone_command
+        or natural_command_with_amount
+    )
+
+
+def _should_defer_to_natural_router(normalized: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:meta|objetivo).*(?:mais perto|falta menos|quase concluido)\b",
+            normalized,
+        )
+        or re.search(
+            r"\b(?:como estao minhas metas|quanto falta (?:pras|para as) minhas metas|"
+            r"me mostra meu progresso)\b",
+            normalized,
+        )
+        or (
+            re.search(r"\b(?:extrato|historico|aportes)\b", normalized)
+            and normalized not in {"extrato", "extrato da meta", "historico"}
+        )
+        or re.search(
+            r"\bo que (?:eu )?ja coloquei (?:nessa|nesta|na) meta\b",
+            normalized,
+        )
+    )
 
 
 def _is_explicit_financial_transaction(normalized: str) -> bool:
