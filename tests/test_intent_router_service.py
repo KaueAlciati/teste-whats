@@ -45,6 +45,12 @@ class IntentRouterServiceTestCase(unittest.TestCase):
             ("como estão minhas metas?", "consultar_status_metas"),
             ("me mostra o extrato da meta teste", "extrato_meta"),
             ("o que já coloquei nessa meta?", "extrato_meta"),
+            ("quanto gastei dia 21?", "consultar_gastos_periodo"),
+            ("quanto gastei no dia 21?", "consultar_gastos_periodo"),
+            ("gastos do dia 21", "consultar_gastos_periodo"),
+            ("quanto eu gastei dia 18?", "consultar_gastos_periodo"),
+            ("recebi quanto dia 18?", "consultar_receitas_periodo"),
+            ("movimentações do dia 21", "consultar_ultimas_transacoes"),
         )
         for phrase, expected in cases:
             with self.subTest(phrase=phrase):
@@ -54,6 +60,15 @@ class IntentRouterServiceTestCase(unittest.TestCase):
                 )
                 self.assertIsNotNone(decision)
                 self.assertEqual(decision.intent, expected)
+
+    def test_specific_day_is_resolved_by_backend(self) -> None:
+        decision = route_deterministic_intent(
+            "quanto gastei dia 21?",
+            current_date=self.current_date,
+        )
+
+        self.assertEqual(decision.parameters.period, "specific_day")
+        self.assertEqual(decision.parameters.month, None)
 
     def test_abbreviations_and_transcription_variations(self) -> None:
         cases = (

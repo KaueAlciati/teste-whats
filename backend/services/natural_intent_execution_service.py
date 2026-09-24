@@ -10,7 +10,18 @@ from backend.models.financial_transaction import FinancialTransaction
 from backend.models.goal import Goal
 from backend.models.user import User
 from backend.schemas.natural_intent import NaturalIntentDecision
-from backend.services.conversation_service import format_brl
+from backend.services.conversation_service import (
+    format_brl,
+    format_category_expenses,
+    format_empty_result,
+    format_financial_analysis,
+    format_goal_progress,
+    format_largest_expense,
+    format_latest_transactions,
+    format_period_name,
+    format_period_total,
+    format_top_expense_category,
+)
 from backend.services.goal_context_service import get_selected_goal
 from backend.services.goal_contribution_service import list_goal_contributions
 from backend.services.goal_service import list_goals
@@ -44,6 +55,12 @@ def execute_natural_intent(
         month_hint=parameters.month,
         default="all",
     )
+    period_name = format_period_name(
+        start_date=period.start_date,
+        end_date=period.end_date,
+        current_date=current_date,
+        fallback=period.label,
+    )
 
     if decision.intent == "consultar_maior_gasto":
         transactions = _transactions(
@@ -53,12 +70,16 @@ def execute_natural_intent(
             transaction_type="expense",
         )
         if not transactions:
-            return f"Não encontrei despesas {period.label}."
+            return format_empty_result(
+                title=f"Maior gasto — {period_name}",
+                message="Nenhuma despesa encontrada nesse período.",
+            )
         largest = max(transactions, key=lambda item: item.amount)
-        return (
-            f"Sua maior despesa {period.label} foi "
-            f"{format_brl(largest.amount)} com {largest.description}, "
-            f"em {largest.transaction_date.strftime('%d/%m/%Y')}."
+        return format_largest_expense(
+            amount=largest.amount,
+            description=largest.description,
+            transaction_date=largest.transaction_date,
+            period_name=period_name,
         )
 
     if decision.intent == "consultar_categoria_maior_gasto":
@@ -69,15 +90,19 @@ def execute_natural_intent(
             transaction_type="expense",
         )
         if not transactions:
-            return f"Não encontrei despesas {period.label}."
+            return format_empty_result(
+                title=f"Onde você mais gastou — {period_name}",
+                message="Nenhuma despesa encontrada nesse período.",
+            )
         totals: dict[str, Decimal] = {}
         for transaction in transactions:
             category = _category_name(transaction)
             totals[category] = totals.get(category, Decimal("0")) + transaction.amount
         category, total = max(totals.items(), key=lambda item: item[1])
-        return (
-            f"A categoria em que você mais gastou {period.label} foi "
-            f"{category}: {format_brl(total)}."
+        return format_top_expense_category(
+            category=category,
+            total=total,
+            period_name=period_name,
         )
 
     if decision.intent == "consultar_gasto_categoria":
@@ -95,10 +120,14 @@ def execute_natural_intent(
         ]
         total = sum((item.amount for item in matches), Decimal("0"))
         if not matches:
-            return f"Não encontrei gastos com {category_query} {period.label}."
-        return (
-            f"Você gastou {format_brl(total)} com {category_query} "
-            f"{period.label}."
+            return format_empty_result(
+                title=f"Gastos com {category_query} — {period_name}",
+                message="Nenhuma despesa encontrada nesse período.",
+            )
+        return format_category_expenses(
+            category=category_query,
+            total=total,
+            period_name=period_name,
         )
 
     if decision.intent == "consultar_ultimas_transacoes":
@@ -108,17 +137,26 @@ def execute_natural_intent(
             user_id=user.id,
             limit=limit,
             transaction_type=parameters.transaction_type,
+            period=period,
         )
         if not transactions:
-            return "Não encontrei movimentações para mostrar."
-        lines = ["Suas movimentações mais recentes:"]
-        for item in transactions:
-            signal = "-" if item.type == "expense" else "+"
-            lines.append(
-                f"• {item.transaction_date.strftime('%d/%m')}: "
-                f"{item.description} — {signal}{format_brl(item.amount)}"
+            return format_empty_result(
+                title=(
+                    f"Movimentações — {period_name}"
+                    if period.key != "all"
+                    else "Movimentações recentes"
+                ),
+                message="Nenhuma movimentação encontrada.",
             )
-        return "\n".join(lines)
+        return format_latest_transactions(
+            transactions=[
+                (item.transaction_date, item.description, item.amount, item.type)
+                for item in transactions
+            ],
+            requested_limit=limit,
+            transaction_type=parameters.transaction_type,
+            period_name=period_name if period.key != "all" else None,
+        )
 
     if decision.intent in {"consultar_gastos_periodo", "consultar_receitas_periodo"}:
         transaction_type = (
@@ -133,8 +171,20 @@ def execute_natural_intent(
             transaction_type=transaction_type,
         )
         total = sum((item.amount for item in transactions), Decimal("0"))
-        noun = "gastou" if transaction_type == "expense" else "recebeu"
-        return f"Você {noun} {format_brl(total)} {period.label}."
+        displayed_transactions = (
+            [
+                (item.transaction_date, item.description, item.amount)
+                for item in transactions
+            ]
+            if period.start_date is not None and period.start_date == period.end_date
+            else None
+        )
+        return format_period_total(
+            transaction_type=transaction_type,
+            total=total,
+            period_name=period_name,
+            transactions=displayed_transactions,
+        )
 
     if decision.intent == "analisar_financas":
         summary = calculate_financial_summary(
@@ -144,17 +194,20 @@ def execute_natural_intent(
         )
         profile = _financial_profile(db, user.id)
         health = calculate_financial_health(summary, profile)
-        commitment = (
-            f"{summary.committed_income_percentage:.1f}%"
-            if summary.committed_income_percentage is not None
-            else "indisponível sem renda registrada"
-        )
-        return (
-            f"Sua saúde financeira está em nível {health.level}, com score "
-            f"{health.score}/100. Neste mês entraram "
-            f"{format_brl(Decimal(str(summary.current_month_income)))} e saíram "
-            f"{format_brl(Decimal(str(summary.current_month_expenses)))}. "
-            f"Comprometimento da renda: {commitment}. {health.explanation}"
+        return format_financial_analysis(
+            income=Decimal(str(summary.current_month_income)),
+            expenses=Decimal(str(summary.current_month_expenses)),
+            free_amount=Decimal(str(summary.free_amount)),
+            committed_percentage=summary.committed_income_percentage,
+            score=health.score,
+            level=health.level,
+            explanation=health.explanation,
+            period_name=format_period_name(
+                start_date=current_date.replace(day=1),
+                end_date=current_date,
+                current_date=current_date,
+                fallback="neste mês",
+            ),
         )
 
     if decision.intent == "sugerir_melhorias_financeiras":
@@ -181,10 +234,11 @@ def execute_natural_intent(
         if not goals:
             return "Você não tem metas ativas no momento."
         goal = max(goals, key=_goal_progress)
-        return (
-            f'A meta mais próxima é "{goal.name}", com '
-            f"{_goal_progress(goal):.0f}% concluída. Faltam "
-            f"{format_brl(max(Decimal('0'), goal.target_amount - goal.current_amount))}."
+        return format_goal_progress(
+            name=goal.name,
+            current_amount=goal.current_amount,
+            target_amount=goal.target_amount,
+            progress=_goal_progress(goal),
         )
 
     if decision.intent == "consultar_status_metas":
@@ -242,6 +296,10 @@ def _transactions(
             FinancialTransaction.user_id == user_id,
             FinancialTransaction.type == transaction_type,
         )
+        .order_by(
+            FinancialTransaction.transaction_date.desc(),
+            FinancialTransaction.id.desc(),
+        )
     )
     if period.start_date is not None:
         statement = statement.where(
@@ -260,6 +318,7 @@ def _latest_transactions(
     user_id: int,
     limit: int,
     transaction_type: str | None,
+    period: NaturalPeriod,
 ) -> list[FinancialTransaction]:
     statement = (
         select(FinancialTransaction)
@@ -272,6 +331,14 @@ def _latest_transactions(
     )
     if transaction_type is not None:
         statement = statement.where(FinancialTransaction.type == transaction_type)
+    if period.start_date is not None:
+        statement = statement.where(
+            FinancialTransaction.transaction_date >= period.start_date
+        )
+    if period.end_date is not None:
+        statement = statement.where(
+            FinancialTransaction.transaction_date <= period.end_date
+        )
     return list(db.scalars(statement))
 
 

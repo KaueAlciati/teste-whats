@@ -30,6 +30,7 @@ NaturalPeriodName = Literal[
     "last_15_days",
     "last_30_days",
     "named_month",
+    "specific_day",
     "all",
 ]
 

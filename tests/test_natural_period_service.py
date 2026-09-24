@@ -22,6 +22,10 @@ class NaturalPeriodServiceTestCase(unittest.TestCase):
             ("em agosto", date(2026, 8, 1), date(2026, 8, 31)),
             ("no mês de janeiro", date(2026, 1, 1), date(2026, 1, 31)),
             ("em dezembro", date(2025, 12, 1), date(2025, 12, 31)),
+            ("quanto gastei dia 21?", date(2026, 9, 21), date(2026, 9, 21)),
+            ("quanto gastei no dia 21?", date(2026, 9, 21), date(2026, 9, 21)),
+            ("quanto eu gastei dia 18?", date(2026, 9, 18), date(2026, 9, 18)),
+            ("recebi quanto dia 18?", date(2026, 9, 18), date(2026, 9, 18)),
         )
         for phrase, expected_start, expected_end in cases:
             with self.subTest(phrase=phrase):

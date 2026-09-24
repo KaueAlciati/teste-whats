@@ -60,6 +60,7 @@ EXTENDED_PERIODS = {
     "last_15_days",
     "last_30_days",
     "named_month",
+    "specific_day",
 }
 
 
@@ -276,11 +277,28 @@ def route_deterministic_intent(
     if goal_name:
         return _decision("extrato_meta", 0.98, goal_name=goal_name)
 
-    if re.search(r"\b(?:quanto|qnt) (?:eu )?(?:gastei|gasto)\b", normalized):
+    if period.key == "specific_day" and re.search(
+        r"\bmovimentacoes? (?:do|no) dia\b",
+        normalized,
+    ):
+        return _decision(
+            "consultar_ultimas_transacoes",
+            0.99,
+            limit=10,
+            **period_params,
+        )
+
+    if re.search(
+        r"\b(?:quanto|qnt) (?:eu )?(?:gastei|gasto)\b|"
+        r"\bo que (?:eu )?gastei\b|"
+        r"\bgastos? (?:do|no) dia\b",
+        normalized,
+    ):
         return _decision("consultar_gastos_periodo", 0.96, **period_params)
     if re.search(
         r"\b(?:quanto|qnt) (?:eu )?(?:recebi|ganhei|entrou)|"
-        r"\bquanto entrou\b",
+        r"\bquanto entrou\b|"
+        r"\b(?:recebi|ganhei) quanto\b",
         normalized,
     ):
         return _decision("consultar_receitas_periodo", 0.96, **period_params)

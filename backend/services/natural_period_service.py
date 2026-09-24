@@ -58,6 +58,21 @@ def resolve_natural_period(
     key = period_hint or key or default
     month = month_hint or month
 
+    if key == "specific_day":
+        day = _specific_day_from_text(normalized)
+        if day is not None:
+            try:
+                target = date(current_date.year, current_date.month, day)
+            except ValueError:
+                pass
+            else:
+                return NaturalPeriod(
+                    target,
+                    target,
+                    key,
+                    f"em {target.strftime('%d/%m/%Y')}",
+                )
+
     if key == "today":
         return NaturalPeriod(current_date, current_date, key, "hoje")
     if key == "yesterday":
@@ -120,7 +135,17 @@ def _period_from_text(normalized: str) -> tuple[str | None, int | None]:
     days_match = re.search(r"\bultimos?\s+(7|15|30)\s+dias\b", normalized)
     if days_match:
         return f"last_{days_match.group(1)}_days", None
+    if _specific_day_from_text(normalized) is not None:
+        return "specific_day", None
     for name, month in MONTH_NAMES.items():
         if re.search(rf"\b{name}\b", normalized):
             return "named_month", month
     return None, None
+
+
+def _specific_day_from_text(normalized: str) -> int | None:
+    match = re.search(r"\b(?:no\s+)?dia\s+([0-3]?\d)\b", normalized)
+    if match is None:
+        return None
+    day = int(match.group(1))
+    return day if 1 <= day <= 31 else None

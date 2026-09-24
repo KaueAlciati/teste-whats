@@ -116,7 +116,7 @@ class NaturalWhatsAppRoutingTestCase(unittest.TestCase):
         )
 
         self.assertIn("R$ 40,00", response)
-        self.assertIn("ontem", response)
+        self.assertIn("Ontem", response)
 
     def test_extended_periods_use_backend_parser_before_financial_ai(self) -> None:
         with patch(
@@ -132,8 +132,25 @@ class NaturalWhatsAppRoutingTestCase(unittest.TestCase):
             )
 
         self.assertIn("R$ 270,00", named_month)
-        self.assertIn("R$ 0,00", previous_week)
+        self.assertIn("Nenhuma despesa", previous_week)
         financial_ai.assert_not_called()
+
+    def test_specific_day_queries_use_current_month_and_year(self) -> None:
+        cases = (
+            ("quanto gastei dia 21?", "R$ 0,00", "Chocolate"),
+            ("quanto gastei no dia 21?", "R$ 0,00", "Gasolina"),
+            ("gastos do dia 21", "R$ 0,00", "21/09"),
+            ("recebi quanto dia 18?", None, "Nenhuma entrada"),
+        )
+        self._transaction("expense", "10", "Chocolate", date(2026, 9, 21), self.food_id)
+        self._transaction("expense", "10", "Gasolina", date(2026, 9, 21), self.transport_id)
+
+        for index, (phrase, excluded, expected) in enumerate(cases):
+            with self.subTest(phrase=phrase):
+                response = self._message(phrase, f"specific-day-{index}")
+                self.assertIn(expected, response)
+                if excluded is not None:
+                    self.assertNotIn(excluded, response)
 
     def test_audio_transcription_uses_the_same_router(self) -> None:
         response = self._message(

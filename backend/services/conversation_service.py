@@ -27,24 +27,21 @@ _CATEGORY_EMOJIS = {
     "outros": "💰",
 }
 
-_PERIOD_SUFFIXES: dict[FinancialPeriod, str] = {
-    "today": "hoje",
-    "yesterday": "ontem",
-    "current_week": "nesta semana",
-    "current_month": "neste mês",
-    "previous_month": "no mês passado",
-    "all": "no total",
-}
-
-_PERIOD_OPENINGS: dict[FinancialPeriod, str] = {
-    "today": "Hoje",
-    "yesterday": "Ontem",
-    "current_week": "Nesta semana",
-    "current_month": "Neste mês",
-    "previous_month": "No mês passado",
-    "all": "No total",
-}
-
+_MONTH_NAMES = (
+    "",
+    "Janeiro",
+    "Fevereiro",
+    "Março",
+    "Abril",
+    "Maio",
+    "Junho",
+    "Julho",
+    "Agosto",
+    "Setembro",
+    "Outubro",
+    "Novembro",
+    "Dezembro",
+)
 
 def response_variant(seed: str, total: int = 3) -> int:
     if total <= 0:
@@ -80,36 +77,20 @@ def transaction_confirmation(
     user_name: str | None = None,
     variant: int = 0,
 ) -> str:
-    normalized_variant = variant % 3
-    name = _first_name(user_name)
-
-    if transaction_type == "expense":
-        introductions = (
-            "Beleza, já registrei pra você 👌",
-            "Pronto! Deixei esse gasto salvo.",
-            (
-                f"Pronto, {name}. Já registrei esse gasto."
-                if name
-                else "Anotado! Esse gasto já ficou registrado."
-            ),
-        )
-    else:
-        introductions = (
-            "Boa! Já registrei essa entrada 👌",
-            "Pronto, essa receita já ficou salva.",
-            (
-                f"Tudo certo, {name}. Já registrei essa entrada."
-                if name
-                else "Anotado! Essa entrada já ficou registrada."
-            ),
-        )
-
+    del user_name, variant
     emoji = _transaction_emoji(category, description)
     display_description = _display_text(description)
+    title = (
+        "Despesa registrada"
+        if transaction_type == "expense"
+        else "Receita registrada"
+    )
+    amount_emoji = "💸" if transaction_type == "expense" else "💰"
     return (
-        f"{introductions[normalized_variant]}\n\n"
-        f"{emoji} {display_description} — {format_brl(amount)}\n"
-        f"📂 {category}\n"
+        f"✅ *{title}*\n\n"
+        f"{amount_emoji} *{format_brl(amount)}*\n"
+        f"{emoji} {display_description}\n"
+        f"📁 {category}\n"
         f"📅 {format_natural_date(transaction_date, current_date)}"
     )
 
@@ -120,14 +101,8 @@ def balance_response(
     user_name: str | None = None,
     variant: int = 0,
 ) -> str:
-    amount = format_brl(balance)
-    name = _first_name(user_name)
-    responses = (
-        f"Hoje seu saldo está em {amount} 💰",
-        f"Você está com {amount} de saldo no momento.",
-        f"{name}, seu saldo está em {amount} agora." if name else f"Seu saldo está em {amount} agora.",
-    )
-    return responses[variant % len(responses)]
+    del user_name, variant
+    return f"💰 *Seu saldo atual*\n\n*{format_brl(balance)}*"
 
 
 def no_transactions_response(
@@ -156,56 +131,225 @@ def total_response(
     user_name: str | None = None,
     variant: int = 0,
 ) -> str:
-    suffix = _PERIOD_SUFFIXES[period]
-    opening = _PERIOD_OPENINGS[period]
-    normalized_variant = variant % 3
-    name = _first_name(user_name)
-
+    del user_name, variant
+    title = "Gastos" if transaction_type == "expense" else "Entradas"
+    emoji = "💸" if transaction_type == "expense" else "🟢"
+    period_name = _financial_period_name(period)
     if total == Decimal("0"):
-        if transaction_type == "expense":
-            responses = (
-                f"Você não teve gastos {suffix}.",
-                f"Não encontrei gastos {suffix}.",
-                (
-                    f"{name}, não há gastos registrados {suffix}."
-                    if name
-                    else f"Não há gastos registrados {suffix}."
-                ),
-            )
-        else:
-            responses = (
-                f"Você não recebeu receitas {suffix}.",
-                f"Não encontrei entradas {suffix}.",
-                (
-                    f"{name}, não há receitas registradas {suffix}."
-                    if name
-                    else f"Não há receitas registradas {suffix}."
-                ),
-            )
-        return responses[normalized_variant]
+        noun = "despesa" if transaction_type == "expense" else "entrada"
+        return (
+            f"📭 *{title} — {period_name}*\n\n"
+            f"Nenhuma {noun} encontrada nesse período."
+        )
+    return f"{emoji} *{title} — {period_name}*\n\n*{format_brl(total)}*"
 
-    amount = format_brl(total)
+
+def format_largest_expense(
+    *,
+    amount: Decimal,
+    description: str,
+    transaction_date: date,
+    period_name: str,
+) -> str:
+    return (
+        f"💸 *Maior gasto — {period_name}*\n\n"
+        f"*{format_brl(amount)}*\n"
+        f"{_display_text(description)}\n"
+        f"📅 {transaction_date.strftime('%d/%m/%Y')}"
+    )
+
+
+def format_top_expense_category(
+    *,
+    category: str,
+    total: Decimal,
+    period_name: str,
+) -> str:
+    emoji = _CATEGORY_EMOJIS.get(_normalize_text(category), "📁")
+    return (
+        f"📊 *Onde você mais gastou — {period_name}*\n\n"
+        f"{emoji} *{category}*\n"
+        f"*{format_brl(total)}*"
+    )
+
+
+def format_category_expenses(
+    *,
+    category: str,
+    total: Decimal,
+    period_name: str,
+) -> str:
+    emoji = _CATEGORY_EMOJIS.get(_normalize_text(category), "📁")
+    return (
+        f"{emoji} *Gastos com {_display_text(category)} — {period_name}*\n\n"
+        f"*{format_brl(total)}*"
+    )
+
+
+def format_empty_result(*, title: str, message: str) -> str:
+    return f"📭 *{title}*\n\n{message}"
+
+
+def format_period_total(
+    *,
+    transaction_type: TransactionType,
+    total: Decimal,
+    period_name: str,
+    transactions: list[tuple[date, str, Decimal]] | None = None,
+) -> str:
+    title = "Gastos" if transaction_type == "expense" else "Entradas"
+    noun = "despesa" if transaction_type == "expense" else "entrada"
+    if total == Decimal("0"):
+        return (
+            f"📭 *{title} — {period_name}*\n\n"
+            f"Nenhuma {noun} encontrada nesse período."
+        )
+
+    emoji = "💸" if transaction_type == "expense" else "🟢"
+    lines = [
+        f"{emoji} *{title} — {period_name}*",
+        "",
+        f"Total: *{format_brl(total)}*",
+    ]
+    rows = (transactions or [])[:5]
+    if rows:
+        lines.append("")
+        lines.extend(
+            f"• {item_date.strftime('%d/%m')} · {_display_text(description)} — *{format_brl(amount)}*"
+            for item_date, description, amount in rows
+        )
+    return "\n".join(lines)
+
+
+def format_latest_transactions(
+    *,
+    transactions: list[tuple[date, str, Decimal, TransactionType]],
+    requested_limit: int,
+    transaction_type: TransactionType | None,
+    period_name: str | None = None,
+) -> str:
     if transaction_type == "expense":
-        responses = (
-            f"Até agora você gastou {amount} {suffix}.",
-            f"Seus gastos somam {amount} {suffix}.",
-            (
-                f"{name}, seus gastos estão em {amount} {suffix}."
-                if name
-                else f"Você gastou {amount} {suffix}."
-            ),
-        )
+        title = f"Seus últimos {requested_limit} gastos"
+    elif transaction_type == "income":
+        title = f"Suas últimas {requested_limit} entradas"
     else:
-        responses = (
-            f"{opening} entraram {amount}.",
-            f"Você recebeu {amount} {suffix}.",
-            (
-                f"{name}, suas entradas somam {amount} {suffix}."
-                if name
-                else f"Suas entradas somam {amount} {suffix}."
-            ),
+        title = f"Suas últimas {requested_limit} movimentações"
+    if period_name:
+        title = f"Movimentações — {period_name}"
+
+    lines = [f"🧾 *{title}*", ""]
+    for index, (item_date, description, amount, item_type) in enumerate(
+        transactions[:10],
+        start=1,
+    ):
+        signal = ""
+        if transaction_type is None:
+            signal = "−" if item_type == "expense" else "+"
+        lines.append(
+            f"{index}. {item_date.strftime('%d/%m')} · "
+            f"{_display_text(description)} — *{signal}{format_brl(amount)}*"
         )
-    return responses[normalized_variant]
+    return "\n".join(lines)
+
+
+def format_financial_analysis(
+    *,
+    income: Decimal,
+    expenses: Decimal,
+    free_amount: Decimal,
+    committed_percentage: float | None,
+    score: int,
+    level: str,
+    explanation: str,
+    period_name: str,
+) -> str:
+    commitment = (
+        f"*{f'{committed_percentage:.1f}'.replace('.', ',')}%*"
+        if committed_percentage is not None
+        else "_indisponível sem renda registrada_"
+    )
+    level_label = {
+        "good": "Boa",
+        "attention": "Atenção",
+        "critical": "Crítica",
+    }.get(level.casefold(), level.capitalize())
+    return (
+        f"🧠 *Sua situação financeira — {period_name}*\n\n"
+        f"🟢 Entradas: *{format_brl(income)}*\n"
+        f"🔴 Gastos: *{format_brl(expenses)}*\n"
+        f"💰 Saldo livre: *{format_brl(free_amount)}*\n"
+        f"📊 Renda comprometida: {commitment}\n\n"
+        f"⚠️ *Saúde financeira: {score}/100 — {level_label}*\n"
+        f"_score calculado pelos seus dados atuais_\n\n"
+        f"{explanation}"
+    )
+
+
+def format_goal_progress(
+    *,
+    name: str,
+    current_amount: Decimal,
+    target_amount: Decimal,
+    progress: Decimal,
+) -> str:
+    normalized_progress = max(Decimal("0"), min(Decimal("100"), progress))
+    filled = min(10, max(0, int(normalized_progress / Decimal("10"))))
+    bar = "█" * filled + "░" * (10 - filled)
+    remaining = max(Decimal("0"), target_amount - current_amount)
+    return (
+        "🎯 *Meta mais próxima*\n\n"
+        f"*{name}*\n"
+        f"`{bar}` {normalized_progress:.0f}%\n\n"
+        f"💰 Guardado: *{format_brl(current_amount)}*\n"
+        f"🎯 Objetivo: {format_brl(target_amount)}\n"
+        f"⏳ Falta: *{format_brl(remaining)}*"
+    )
+
+
+def format_period_name(
+    *,
+    start_date: date | None,
+    end_date: date | None,
+    current_date: date,
+    fallback: str,
+) -> str:
+    if start_date is not None and start_date == end_date:
+        if start_date == current_date:
+            return "Hoje"
+        if start_date == current_date - timedelta(days=1):
+            return "Ontem"
+        return start_date.strftime("%d/%m")
+    if (
+        start_date is not None
+        and end_date is not None
+        and start_date.day == 1
+        and start_date.year == end_date.year
+        and start_date.month == end_date.month
+        and (end_date == current_date or (end_date + timedelta(days=1)).day == 1)
+    ):
+        month = _MONTH_NAMES[start_date.month]
+        return (
+            month
+            if start_date.year == current_date.year
+            else f"{month}/{start_date.year}"
+        )
+    cleaned = fallback.strip().rstrip(".")
+    for prefix in ("em ", "no ", "na ", "nos ", "nas "):
+        if cleaned.casefold().startswith(prefix):
+            cleaned = cleaned[len(prefix):]
+            break
+    return cleaned[:1].upper() + cleaned[1:] if cleaned else "Total"
+
+
+def _financial_period_name(period: FinancialPeriod) -> str:
+    return {
+        "today": "Hoje",
+        "yesterday": "Ontem",
+        "current_week": "Esta semana",
+        "current_month": "Este mês",
+        "previous_month": "Mês passado",
+        "all": "Total",
+    }[period]
 
 
 def clarification_response(

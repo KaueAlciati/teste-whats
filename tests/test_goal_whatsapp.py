@@ -549,7 +549,7 @@ class GoalWhatsAppTestCase(unittest.TestCase):
             )
 
         interpret_mock.assert_called_once()
-        self.assertIn("gastos", response)
+        self.assertIn("gastos", response.casefold())
 
     def test_goal_core_accepts_future_whatsapp_image_source(self) -> None:
         self._message(

@@ -64,8 +64,9 @@ class FinancialAssistantServiceTestCase(unittest.TestCase):
         self.assertEqual(transaction.type, "expense")
         self.assertEqual(transaction.amount, Decimal("40.00"))
         self.assertEqual(transaction.source, "whatsapp_text")
-        self.assertIn("gasto salvo", response)
-        self.assertIn("Gasolina — R$ 40,00", response)
+        self.assertIn("Despesa registrada", response)
+        self.assertIn("R$ 40,00", response)
+        self.assertIn("Gasolina", response)
         self.assertIn("Transporte", response)
 
     def test_income_message_creates_income(self) -> None:
@@ -91,8 +92,8 @@ class FinancialAssistantServiceTestCase(unittest.TestCase):
         self.assertIsNotNone(transaction)
         self.assertEqual(transaction.type, "income")
         self.assertEqual(transaction.amount, Decimal("1500.00"))
-        self.assertIn("entrada já ficou registrada", response)
-        self.assertIn("Salário — R$ 1.500,00", response)
+        self.assertIn("Receita registrada", response)
+        self.assertIn("R$ 1.500,00", response)
         self.assertIn("Salário", response)
 
     def test_audio_expense_uses_existing_flow_and_audio_source(self) -> None:
@@ -156,7 +157,7 @@ class FinancialAssistantServiceTestCase(unittest.TestCase):
 
         self.assertEqual(
             response,
-            "Você está com R$ 749,75 de saldo no momento.",
+            "💰 *Seu saldo atual*\n\n*R$ 749,75*",
         )
 
     def test_expense_query_uses_current_month_period(self) -> None:
@@ -185,7 +186,7 @@ class FinancialAssistantServiceTestCase(unittest.TestCase):
 
         self.assertEqual(
             response,
-            "Até agora você gastou R$ 40,00 neste mês.",
+            "💸 *Gastos — Este mês*\n\n*R$ 40,00*",
         )
 
     def test_income_query_uses_current_month_period(self) -> None:
@@ -212,7 +213,7 @@ class FinancialAssistantServiceTestCase(unittest.TestCase):
             "income-query",
         )
 
-        self.assertEqual(response, "Você recebeu R$ 3.200,00 neste mês.")
+        self.assertEqual(response, "🟢 *Entradas — Este mês*\n\n*R$ 3.200,00*")
 
     def test_duplicate_message_creates_only_one_transaction(self) -> None:
         intent = self._intent(
