@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from backend.models.financial_profile import FinancialProfile
 from backend.schemas.insights import FinancialProfileWrite
+from backend.services.insights_invalidation_service import mark_insights_stale
 
 
 class FinancialProfileAlreadyExistsError(ValueError):
@@ -57,8 +58,7 @@ def update_financial_profile(
     for field, value in data.model_dump().items():
         setattr(profile, field, value)
     profile.onboarding_completed = True
-    profile.analysis_cache = None
-    profile.analysis_generated_at = None
+    mark_insights_stale(db, user_id=user_id)
     db.commit()
     db.refresh(profile)
     return profile

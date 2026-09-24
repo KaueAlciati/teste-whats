@@ -31,6 +31,7 @@ from backend.services.insights_ai_service import InsightsAIServiceError
 from backend.services.insights_calculation_service import (
     calculate_financial_summary,
 )
+from backend.services.financial_service import create_transaction
 
 
 class InsightsApiTestCase(unittest.TestCase):
@@ -271,6 +272,67 @@ class InsightsApiTestCase(unittest.TestCase):
         self.assertTrue(second.json()["ai"]["cached"])
         ai_mock.assert_called_once()
 
+    def test_automatic_insights_off_skips_get_and_manual_refresh_works(self) -> None:
+        self._create_profile(self.token)
+        with self.session_factory() as db:
+            user = db.get(User, self.user.id)
+            user.automatic_insights_enabled = False
+            db.commit()
+
+        with patch(
+            "backend.services.insights_service.generate_ai_insights",
+            return_value=self._ai_content(),
+        ) as ai_mock:
+            automatic = self.client.get(
+                "/api/insights",
+                headers=self._headers(self.token),
+            )
+            manual = self.client.post(
+                "/api/insights/refresh",
+                headers=self._headers(self.token),
+            )
+
+        self.assertEqual(automatic.status_code, 200)
+        self.assertFalse(automatic.json()["ai"]["available"])
+        self.assertIsNotNone(automatic.json()["market"])
+        self.assertEqual(manual.status_code, 200)
+        self.assertTrue(manual.json()["ai"]["available"])
+        ai_mock.assert_called_once()
+
+    def test_financial_change_refreshes_automatic_insights_only_once(self) -> None:
+        self._create_profile(self.token)
+        with patch(
+            "backend.services.insights_service.generate_ai_insights",
+            return_value=self._ai_content(),
+        ) as ai_mock:
+            initial = self.client.get(
+                "/api/insights",
+                headers=self._headers(self.token),
+            )
+            with self.session_factory() as db:
+                create_transaction(
+                    db,
+                    user_id=self.user.id,
+                    type="expense",
+                    amount="25.00",
+                    description="Compra",
+                    transaction_date=date.today(),
+                    source="dashboard_manual",
+                )
+            refreshed = self.client.get(
+                "/api/insights",
+                headers=self._headers(self.token),
+            )
+            cached = self.client.get(
+                "/api/insights",
+                headers=self._headers(self.token),
+            )
+
+        self.assertEqual(initial.status_code, 200)
+        self.assertFalse(refreshed.json()["ai"]["cached"])
+        self.assertTrue(cached.json()["ai"]["cached"])
+        self.assertEqual(ai_mock.call_count, 2)
+
     def test_no_transactions_no_goals_and_groq_unavailable_are_safe(self) -> None:
         self._create_profile(self.token)
         with patch(
@@ -474,6 +536,7 @@ class InsightsApiTestCase(unittest.TestCase):
             email=email,
             whatsapp_phone=phone,
             password_hash="$argon2id$test-hash",
+            automatic_insights_enabled=True,
         )
         db.add(user)
         db.commit()

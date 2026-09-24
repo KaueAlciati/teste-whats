@@ -6,6 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from backend.models.goal import Goal
+from backend.services.insights_invalidation_service import mark_insights_stale
 
 
 def list_goals(db: Session, *, user_id: int) -> list[Goal]:
@@ -45,6 +46,7 @@ def create_goal(
     )
     db.add(goal)
     try:
+        mark_insights_stale(db, user_id=user_id)
         db.commit()
         db.refresh(goal)
         return goal
@@ -82,6 +84,7 @@ def update_goal(
         )
 
     try:
+        mark_insights_stale(db, user_id=user_id)
         db.commit()
         db.refresh(goal)
         return goal
@@ -96,6 +99,7 @@ def delete_goal(db: Session, *, goal: Goal, user_id: int) -> None:
 
     try:
         db.delete(goal)
+        mark_insights_stale(db, user_id=user_id)
         db.commit()
     except SQLAlchemyError:
         db.rollback()

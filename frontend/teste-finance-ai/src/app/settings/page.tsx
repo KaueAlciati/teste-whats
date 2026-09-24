@@ -50,6 +50,8 @@ export default function SettingsPage() {
   const [criticalAlertsEnabled, setCriticalAlertsEnabled] = useState(false);
   const [loadingCriticalAlerts, setLoadingCriticalAlerts] = useState(true);
   const [savingCriticalAlerts, setSavingCriticalAlerts] = useState(false);
+  const [automaticInsightsEnabled, setAutomaticInsightsEnabled] = useState(false);
+  const [savingAutomaticInsights, setSavingAutomaticInsights] = useState(false);
 
   const [clearing, setClearing] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -69,6 +71,7 @@ export default function SettingsPage() {
           setCriticalAlertsEnabled(
             settings.critical_spending_alerts_enabled,
           );
+          setAutomaticInsightsEnabled(settings.ai_enabled);
         }
       })
       .catch(() => {
@@ -102,6 +105,25 @@ export default function SettingsPage() {
       await handleFetchError(error, "Erro ao atualizar alertas:");
     } finally {
       setSavingCriticalAlerts(false);
+    }
+  }
+
+  async function handleAutomaticInsightsToggle() {
+    const nextValue = !automaticInsightsEnabled;
+    setSavingAutomaticInsights(true);
+    try {
+      const settings = await api.updateSettings({ ai_enabled: nextValue });
+      setAutomaticInsightsEnabled(settings.ai_enabled);
+      addToast(
+        "success",
+        nextValue
+          ? "Insights automáticos ativados."
+          : "Insights automáticos desativados.",
+      );
+    } catch (error) {
+      await handleFetchError(error, "Erro ao atualizar a preferência de IA:");
+    } finally {
+      setSavingAutomaticInsights(false);
     }
   }
 
@@ -364,9 +386,10 @@ export default function SettingsPage() {
               />
               <ToggleItem
                 title="Preferências de IA"
-                description="Configuração disponível futuramente."
-                checked={false}
-                disabled
+                description="Atualiza a análise automaticamente após mudanças financeiras."
+                checked={automaticInsightsEnabled}
+                disabled={loadingCriticalAlerts || savingAutomaticInsights}
+                onToggle={handleAutomaticInsightsToggle}
               />
             </div>
           </section>

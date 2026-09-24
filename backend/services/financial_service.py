@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from backend.models.category import Category
 from backend.models.financial_transaction import FinancialTransaction
 from backend.services.attachment_service import delete_stored_file_if_unreferenced
+from backend.services.insights_invalidation_service import mark_insights_stale
 from backend.services.spending_alert_service import evaluate_spending_alerts
 
 
@@ -92,6 +93,7 @@ def create_transaction(
             user_id=user_id,
             reference_date=transaction_date,
         )
+        mark_insights_stale(db, user_id=user_id)
         if commit:
             db.commit()
             db.refresh(transaction)
@@ -214,6 +216,7 @@ def update_transaction(
             transaction.category_id = category.id
             transaction.category = category
 
+        mark_insights_stale(db, user_id=user_id)
         db.commit()
         db.refresh(transaction)
         return transaction
@@ -236,6 +239,7 @@ def delete_transaction(
     }
     try:
         db.delete(transaction)
+        mark_insights_stale(db, user_id=user_id)
         db.commit()
         for storage_key in storage_keys:
             delete_stored_file_if_unreferenced(db, storage_key)

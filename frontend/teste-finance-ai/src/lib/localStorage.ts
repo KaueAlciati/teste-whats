@@ -843,7 +843,7 @@ const localStorageBackend = {
         locale: "pt-BR",
         theme: "dark",
         notifications_enabled: true,
-        ai_enabled: true,
+        ai_enabled: false,
         critical_spending_alerts_enabled: false,
         updated_at: new Date().toISOString(),
       }
@@ -859,7 +859,7 @@ const localStorageBackend = {
       locale: "pt-BR",
       theme: "dark",
       notifications_enabled: true,
-      ai_enabled: true,
+      ai_enabled: false,
       critical_spending_alerts_enabled: false,
       updated_at: new Date().toISOString(),
     };
@@ -1009,7 +1009,7 @@ const localStorageBackend = {
   async getInsights(): Promise<InsightData | null> {
     const userId = requireCurrentUserId();
     const settingsByUser = readLs<Record<number, UserSettings>>(LS_KEY_SETTINGS, {});
-    const aiEnabled = settingsByUser[userId]?.ai_enabled ?? true;
+    const aiEnabled = settingsByUser[userId]?.ai_enabled ?? false;
     if (!aiEnabled) {
       return {
         ai_enabled: false,

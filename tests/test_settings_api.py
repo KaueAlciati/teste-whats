@@ -112,6 +112,32 @@ class SettingsApiTestCase(unittest.TestCase):
             persisted = db.get(User, self.user_a["id"])
             self.assertTrue(persisted.critical_spending_alerts_enabled)
 
+    def test_automatic_insights_preference_defaults_off_and_is_isolated(self) -> None:
+        initial = self.client.get(
+            "/api/settings",
+            headers=self.user_a["headers"],
+        )
+        enabled = self.client.put(
+            "/api/settings",
+            headers=self.user_a["headers"],
+            json={"ai_enabled": True},
+        )
+        user_b = self.client.get(
+            "/api/settings",
+            headers=self.user_b["headers"],
+        )
+
+        self.assertEqual(initial.status_code, 200)
+        self.assertFalse(initial.json()["ai_enabled"])
+        self.assertEqual(enabled.status_code, 200)
+        self.assertTrue(enabled.json()["ai_enabled"])
+        self.assertFalse(user_b.json()["ai_enabled"])
+
+        with self.session_factory() as db:
+            persisted = db.get(User, self.user_a["id"])
+            self.assertTrue(persisted.automatic_insights_enabled)
+            self.assertFalse(persisted.critical_spending_alerts_enabled)
+
     def test_notifications_feed_and_bell_use_authenticated_user(self) -> None:
         for account in (self.user_a, self.user_b):
             response = self.client.put(

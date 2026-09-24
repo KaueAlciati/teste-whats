@@ -78,6 +78,12 @@ class FinancialProfile(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+    analysis_stale: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default="true",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

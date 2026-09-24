@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from backend.models.goal import Goal
 from backend.models.goal_contribution import GoalContribution
+from backend.services.insights_invalidation_service import mark_insights_stale
 
 
 GOAL_CONTRIBUTION_SOURCES = {
@@ -59,6 +60,7 @@ def add_goal_contribution(
     db.add(contribution)
 
     try:
+        mark_insights_stale(db, user_id=user_id)
         db.commit()
         db.refresh(contribution)
         db.refresh(goal)

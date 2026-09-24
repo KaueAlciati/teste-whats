@@ -85,17 +85,29 @@ def build_insights_analysis(
     fingerprint = _payload_fingerprint(ai_payload)
     cached_content = _cached_ai_content(
         profile,
-        fingerprint=fingerprint,
+        fingerprint=None,
         now=now,
-        allow_expired=False,
+        allow_expired=True,
     )
     ai_state: AIInsightsState
-    if cached_content is not None and not force_refresh:
+    should_generate = force_refresh or (
+        user.automatic_insights_enabled
+        and (profile.analysis_stale or cached_content is None)
+    )
+    if not should_generate:
         ai_state = AIInsightsState(
-            available=True,
-            cached=True,
-            generated_at=profile.analysis_generated_at,
-            message=None,
+            available=cached_content is not None,
+            cached=cached_content is not None,
+            generated_at=(
+                profile.analysis_generated_at
+                if cached_content is not None
+                else None
+            ),
+            message=_automatic_insights_message(
+                enabled=user.automatic_insights_enabled,
+                stale=profile.analysis_stale,
+                has_content=cached_content is not None,
+            ),
             content=cached_content,
         )
     else:
@@ -110,6 +122,7 @@ def build_insights_analysis(
                 "content": content.model_dump(mode="json"),
             }
             profile.analysis_generated_at = now
+            profile.analysis_stale = False
             db.commit()
             db.refresh(profile)
             profile_response = financial_profile_response(profile)
@@ -123,7 +136,7 @@ def build_insights_analysis(
         except InsightsAIServiceError:
             stale_content = _cached_ai_content(
                 profile,
-                fingerprint=fingerprint,
+                fingerprint=None,
                 now=now,
                 allow_expired=True,
             )
@@ -245,7 +258,7 @@ def _payload_fingerprint(payload: dict) -> str:
 def _cached_ai_content(
     profile: FinancialProfile,
     *,
-    fingerprint: str,
+    fingerprint: str | None,
     now: datetime,
     allow_expired: bool,
 ) -> AIInsightsContent | None:
@@ -253,7 +266,7 @@ def _cached_ai_content(
     generated_at = profile.analysis_generated_at
     if not isinstance(cache, dict) or generated_at is None:
         return None
-    if cache.get("fingerprint") != fingerprint:
+    if fingerprint is not None and cache.get("fingerprint") != fingerprint:
         return None
     normalized_generated_at = generated_at
     if normalized_generated_at.tzinfo is None and now.tzinfo is not None:
@@ -266,6 +279,25 @@ def _cached_ai_content(
         return AIInsightsContent.model_validate(cache.get("content"))
     except (TypeError, ValueError):
         return None
+
+
+def _automatic_insights_message(
+    *,
+    enabled: bool,
+    stale: bool,
+    has_content: bool,
+) -> str | None:
+    if enabled or (has_content and not stale):
+        return None
+    if has_content:
+        return (
+            "A análise da IA está desatualizada. Use Atualizar análise para "
+            "gerar uma nova versão."
+        )
+    return (
+        "As atualizações automáticas da IA estão desativadas. Use Atualizar "
+        "análise quando quiser gerar uma análise."
+    )
 
 
 def _apply_insight_guardrails(

@@ -6,7 +6,8 @@ from pydantic import BaseModel, ConfigDict
 class SettingsUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    critical_spending_alerts_enabled: bool
+    critical_spending_alerts_enabled: bool | None = None
+    ai_enabled: bool | None = None
 
 
 class SettingsResponse(BaseModel):
@@ -15,6 +16,6 @@ class SettingsResponse(BaseModel):
     locale: str = "pt-BR"
     theme: str = "dark"
     notifications_enabled: bool = True
-    ai_enabled: bool = True
+    ai_enabled: bool
     critical_spending_alerts_enabled: bool
     updated_at: datetime
