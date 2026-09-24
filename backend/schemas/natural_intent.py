@@ -55,8 +55,8 @@ class NaturalIntentParameters(BaseModel):
     @field_validator("limit")
     @classmethod
     def validate_limit(cls, value: int | None) -> int | None:
-        if value is not None and not 1 <= value <= 10:
-            raise ValueError("limit deve estar entre 1 e 10")
+        if value is not None and not 1 <= value <= 20:
+            raise ValueError("limit deve estar entre 1 e 20")
         return value
 
 

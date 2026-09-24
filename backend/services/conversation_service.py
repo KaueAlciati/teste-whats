@@ -227,8 +227,11 @@ def format_latest_transactions(
     requested_limit: int,
     transaction_type: TransactionType | None,
     period_name: str | None = None,
+    largest_first: bool = False,
 ) -> str:
-    if transaction_type == "expense":
+    if largest_first:
+        title = f"Seus {requested_limit} maiores gastos"
+    elif transaction_type == "expense":
         title = f"Seus últimos {requested_limit} gastos"
     elif transaction_type == "income":
         title = f"Suas últimas {requested_limit} entradas"
@@ -239,7 +242,7 @@ def format_latest_transactions(
 
     lines = [f"🧾 *{title}*", ""]
     for index, (item_date, description, amount, item_type) in enumerate(
-        transactions[:10],
+        transactions[:requested_limit],
         start=1,
     ):
         signal = ""

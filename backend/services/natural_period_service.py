@@ -28,6 +28,7 @@ class NaturalPeriod:
     end_date: date | None
     key: str
     label: str
+    is_valid: bool = True
 
 
 def normalize_language(value: str) -> str:
@@ -54,6 +55,28 @@ def resolve_natural_period(
     default: str = "all",
 ) -> NaturalPeriod:
     normalized = normalize_language(text)
+    explicit_date = _explicit_date_from_text(
+        text,
+        normalized=normalized,
+        current_date=current_date,
+    )
+    if explicit_date is not None:
+        target, is_valid = explicit_date
+        if not is_valid:
+            return NaturalPeriod(
+                None,
+                None,
+                "specific_day",
+                "na data informada",
+                is_valid=False,
+            )
+        return NaturalPeriod(
+            target,
+            target,
+            "specific_day",
+            f"em {target.strftime('%d/%m/%Y')}",
+        )
+
     key, month = _period_from_text(normalized)
     key = period_hint or key or default
     month = month_hint or month
@@ -106,7 +129,7 @@ def resolve_natural_period(
             f"nos últimos {days} dias",
         )
     if key == "named_month" and month is not None:
-        year = current_date.year if month <= current_date.month else current_date.year - 1
+        year = current_date.year
         end = date(year, month, calendar.monthrange(year, month)[1])
         return NaturalPeriod(
             date(year, month, 1),
@@ -149,3 +172,49 @@ def _specific_day_from_text(normalized: str) -> int | None:
         return None
     day = int(match.group(1))
     return day if 1 <= day <= 31 else None
+
+
+def _explicit_date_from_text(
+    text: str,
+    *,
+    normalized: str,
+    current_date: date,
+) -> tuple[date | None, bool] | None:
+    numeric = re.search(
+        r"(?<!\d)(\d{1,2})\s*/\s*(\d{1,2})(?:\s*/\s*(\d{4}))?(?!\d)",
+        text,
+    )
+    if numeric is not None:
+        return _validated_date(
+            year=int(numeric.group(3) or current_date.year),
+            month=int(numeric.group(2)),
+            day=int(numeric.group(1)),
+        )
+
+    named = re.search(
+        rf"\b(\d{{1,2}})\s+de\s+({'|'.join(MONTH_NAMES)})"
+        r"(?:\s+de\s+(\d{4}))?\b",
+        normalized,
+    )
+    if named is not None:
+        return _validated_date(
+            year=int(named.group(3) or current_date.year),
+            month=MONTH_NAMES[named.group(2)],
+            day=int(named.group(1)),
+        )
+
+    day_match = re.search(r"\b(?:no\s+)?dia\s+(\d{1,2})\b", normalized)
+    if day_match is not None:
+        return _validated_date(
+            year=current_date.year,
+            month=current_date.month,
+            day=int(day_match.group(1)),
+        )
+    return None
+
+
+def _validated_date(*, year: int, month: int, day: int) -> tuple[date | None, bool]:
+    try:
+        return date(year, month, day), True
+    except ValueError:
+        return None, False

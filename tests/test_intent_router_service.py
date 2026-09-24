@@ -70,6 +70,61 @@ class IntentRouterServiceTestCase(unittest.TestCase):
         self.assertEqual(decision.parameters.period, "specific_day")
         self.assertEqual(decision.parameters.month, None)
 
+    def test_query_quantity_is_extracted_and_safely_clamped(self) -> None:
+        cases = (
+            ("me mostra meus últimos 3 gastos", 3, "expense"),
+            ("últimos 10 gastos", 10, "expense"),
+            ("me mostra 5 movimentações", 5, None),
+            ("quais foram meus 2 maiores gastos?", 2, "expense"),
+            ("me mostra 0 movimentações", 1, None),
+            ("me mostra 50 movimentações", 20, None),
+        )
+        for phrase, expected_limit, expected_type in cases:
+            with self.subTest(phrase=phrase):
+                decision = route_deterministic_intent(
+                    phrase,
+                    current_date=self.current_date,
+                )
+                self.assertEqual(decision.intent, "consultar_ultimas_transacoes")
+                self.assertEqual(decision.parameters.limit, expected_limit)
+                self.assertEqual(decision.parameters.transaction_type, expected_type)
+
+    def test_category_and_period_are_extracted_independently(self) -> None:
+        cases = (
+            ("quanto gastei com gasolina esse mês?", "gasolina", "current_month"),
+            (
+                "quanto gastei de alimentação semana passada?",
+                "alimentacao",
+                "previous_week",
+            ),
+            ("quanto gastei em compras ontem?", "compras", "yesterday"),
+            ("quanto foi de transporte em agosto?", "transporte", "named_month"),
+            ("quanto gastei com mercado nos últimos 30 dias?", "mercado", "last_30_days"),
+        )
+        for phrase, expected_category, expected_period in cases:
+            with self.subTest(phrase=phrase):
+                decision = route_deterministic_intent(
+                    phrase,
+                    current_date=self.current_date,
+                )
+                self.assertEqual(decision.intent, "consultar_gasto_categoria")
+                self.assertEqual(decision.parameters.category, expected_category)
+                self.assertEqual(decision.parameters.period, expected_period)
+
+    def test_supported_date_formats_route_deterministically(self) -> None:
+        for phrase in (
+            "quanto gastei dia 21?",
+            "quanto gastei em 21/09?",
+            "quanto gastei em 21 de setembro?",
+            "quanto gastei em setembro?",
+        ):
+            with self.subTest(phrase=phrase):
+                decision = route_deterministic_intent(
+                    phrase,
+                    current_date=self.current_date,
+                )
+                self.assertEqual(decision.intent, "consultar_gastos_periodo")
+
     def test_abbreviations_and_transcription_variations(self) -> None:
         cases = (
             ("qnt gastei hj", "consultar_gastos_periodo"),
@@ -112,6 +167,12 @@ class IntentRouterServiceTestCase(unittest.TestCase):
                         current_date=self.current_date,
                     )
                 )
+
+        expense = route_deterministic_intent(
+            "gastei 50 de gasolina",
+            current_date=self.current_date,
+        )
+        self.assertIsNone(expense)
 
     def test_groq_fallback_uses_structured_output_and_active_examples(self) -> None:
         self.session.add(

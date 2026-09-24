@@ -60,15 +60,17 @@ class NaturalWhatsAppRoutingTestCase(unittest.TestCase):
             type="expense",
             is_default=True,
         )
+        purchases = Category(name="Compras", type="expense", is_default=True)
         salary = Category(name="Salário", type="income", is_default=True)
         others_expense = Category(name="Outros", type="expense", is_default=True)
         others_income = Category(name="Outros", type="income", is_default=True)
         self.session.add_all(
-            [food, transport, salary, others_expense, others_income]
+            [food, transport, purchases, salary, others_expense, others_income]
         )
         self.session.commit()
         self.food_id = food.id
         self.transport_id = transport.id
+        self.purchases_id = purchases.id
         self.salary_id = salary.id
         self.session.add(
             FinancialProfile(
@@ -118,6 +120,80 @@ class NaturalWhatsAppRoutingTestCase(unittest.TestCase):
         self.assertIn("R$ 40,00", response)
         self.assertIn("Ontem", response)
 
+    def test_query_quantities_and_largest_expenses_are_deterministic(self) -> None:
+        latest_expenses = self._message(
+            "me mostra meus últimos 3 gastos",
+            "quantity-three-expenses",
+        )
+        movements = self._message(
+            "me mostra 10 movimentações",
+            "quantity-ten-movements",
+        )
+        largest = self._message(
+            "quais foram meus 2 maiores gastos?",
+            "quantity-two-largest",
+        )
+
+        self.assertIn("Seus últimos 3 gastos", latest_expenses)
+        self.assertIn("Suas últimas 10 movimentações", movements)
+        self.assertIn("Seus 2 maiores gastos", largest)
+        self.assertLess(largest.index("Mercado"), largest.index("Gasolina"))
+
+    def test_category_and_period_queries_use_backend_data(self) -> None:
+        self._transaction(
+            "expense",
+            "60",
+            "Restaurante",
+            date(2026, 9, 18),
+            self.food_id,
+        )
+        self._transaction(
+            "expense",
+            "25",
+            "Tênis",
+            date(2026, 9, 22),
+            self.purchases_id,
+        )
+        self._transaction(
+            "expense",
+            "50",
+            "Pedágio",
+            date(2026, 8, 10),
+            self.transport_id,
+        )
+        cases = (
+            ("quanto gastei com gasolina esse mês?", "R$ 80,00"),
+            ("quanto gastei com alimentação semana passada?", "R$ 60,00"),
+            ("quanto gastei em compras ontem?", "R$ 25,00"),
+            ("quanto foi de transporte em agosto?", "R$ 50,00"),
+            ("quanto gastei com mercado nos últimos 30 dias?", "R$ 150,00"),
+            ("quanto gastei com alimentasao esse mês?", "R$ 250,00"),
+        )
+        for index, (phrase, expected) in enumerate(cases):
+            with self.subTest(phrase=phrase):
+                response = self._message(phrase, f"category-period-{index}")
+                self.assertIn(expected, response)
+
+    def test_unknown_category_requests_clarification(self) -> None:
+        response = self._message(
+            "quanto gastei com teletransporte esse mês?",
+            "unknown-category",
+        )
+
+        self.assertIn("Qual categoria", response)
+
+    def test_impossible_date_is_rejected_without_financial_ai(self) -> None:
+        with patch(
+            "backend.services.financial_assistant_service.interpret_financial_message"
+        ) as financial_ai:
+            response = self._message(
+                "quanto gastei em 31/09?",
+                "invalid-explicit-date",
+            )
+
+        self.assertIn("data válida", response)
+        financial_ai.assert_not_called()
+
     def test_extended_periods_use_backend_parser_before_financial_ai(self) -> None:
         with patch(
             "backend.services.financial_assistant_service.interpret_financial_message"
@@ -141,6 +217,8 @@ class NaturalWhatsAppRoutingTestCase(unittest.TestCase):
             ("quanto gastei no dia 21?", "R$ 0,00", "Gasolina"),
             ("gastos do dia 21", "R$ 0,00", "21/09"),
             ("recebi quanto dia 18?", None, "Nenhuma entrada"),
+            ("quanto gastei em 21/09?", "R$ 0,00", "Chocolate"),
+            ("quanto gastei em 21 de setembro?", "R$ 0,00", "Gasolina"),
         )
         self._transaction("expense", "10", "Chocolate", date(2026, 9, 21), self.food_id)
         self._transaction("expense", "10", "Gasolina", date(2026, 9, 21), self.transport_id)

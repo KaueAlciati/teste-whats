@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime
 from decimal import Decimal
 from difflib import SequenceMatcher
@@ -5,6 +6,7 @@ from difflib import SequenceMatcher
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
+from backend.models.category import Category
 from backend.models.financial_profile import FinancialProfile
 from backend.models.financial_transaction import FinancialTransaction
 from backend.models.goal import Goal
@@ -38,6 +40,9 @@ from backend.services.natural_period_service import (
 )
 
 
+CATEGORY_MATCH_THRESHOLD = 0.86
+
+
 def execute_natural_intent(
     db: Session,
     *,
@@ -55,6 +60,9 @@ def execute_natural_intent(
         month_hint=parameters.month,
         default="all",
     )
+    if not period.is_valid:
+        return "Não consegui entender essa data. Pode informar uma data válida?"
+
     period_name = format_period_name(
         start_date=period.start_date,
         end_date=period.end_date,
@@ -107,6 +115,15 @@ def execute_natural_intent(
 
     if decision.intent == "consultar_gasto_categoria":
         category_query = (parameters.category or "").strip()
+        if not _category_query_is_confident(
+            db,
+            user_id=user.id,
+            query=category_query,
+        ):
+            return (
+                "Não encontrei essa categoria com confiança. "
+                "Qual categoria você quer consultar?"
+            )
         transactions = _transactions(
             db,
             user_id=user.id,
@@ -132,12 +149,19 @@ def execute_natural_intent(
 
     if decision.intent == "consultar_ultimas_transacoes":
         limit = parameters.limit or 5
+        largest_first = bool(
+            re.search(
+                r"\bmaiores?\s+(?:gastos?|despesas?)\b",
+                normalize_language(original_text),
+            )
+        )
         transactions = _latest_transactions(
             db,
             user_id=user.id,
             limit=limit,
             transaction_type=parameters.transaction_type,
             period=period,
+            largest_first=largest_first,
         )
         if not transactions:
             return format_empty_result(
@@ -156,6 +180,7 @@ def execute_natural_intent(
             requested_limit=limit,
             transaction_type=parameters.transaction_type,
             period_name=period_name if period.key != "all" else None,
+            largest_first=largest_first,
         )
 
     if decision.intent in {"consultar_gastos_periodo", "consultar_receitas_periodo"}:
@@ -319,16 +344,23 @@ def _latest_transactions(
     limit: int,
     transaction_type: str | None,
     period: NaturalPeriod,
+    largest_first: bool = False,
 ) -> list[FinancialTransaction]:
     statement = (
         select(FinancialTransaction)
         .where(FinancialTransaction.user_id == user_id)
-        .order_by(
+    )
+    if largest_first:
+        statement = statement.order_by(
+            FinancialTransaction.amount.desc(),
             FinancialTransaction.transaction_date.desc(),
             FinancialTransaction.id.desc(),
         )
-        .limit(limit)
-    )
+    else:
+        statement = statement.order_by(
+            FinancialTransaction.transaction_date.desc(),
+            FinancialTransaction.id.desc(),
+        )
     if transaction_type is not None:
         statement = statement.where(FinancialTransaction.type == transaction_type)
     if period.start_date is not None:
@@ -339,7 +371,7 @@ def _latest_transactions(
         statement = statement.where(
             FinancialTransaction.transaction_date <= period.end_date
         )
-    return list(db.scalars(statement))
+    return list(db.scalars(statement.limit(limit)))
 
 
 def _matches_category_or_description(
@@ -347,9 +379,59 @@ def _matches_category_or_description(
     query: str,
 ) -> bool:
     normalized_query = normalize_language(query)
-    return normalized_query in normalize_language(_category_name(transaction)) or (
-        normalized_query in normalize_language(transaction.description)
+    return _category_match_score(
+        normalized_query,
+        normalize_language(_category_name(transaction)),
+    ) >= CATEGORY_MATCH_THRESHOLD or (
+        _category_match_score(
+            normalized_query,
+            normalize_language(transaction.description),
+        )
+        >= CATEGORY_MATCH_THRESHOLD
     )
+
+
+def _category_query_is_confident(
+    db: Session,
+    *,
+    user_id: int,
+    query: str,
+) -> bool:
+    normalized_query = normalize_language(query)
+    if not normalized_query:
+        return False
+    category_names = db.scalars(
+        select(Category.name).where(
+            Category.type == "expense",
+            (Category.user_id.is_(None)) | (Category.user_id == user_id),
+        )
+    )
+    descriptions = db.scalars(
+        select(FinancialTransaction.description).where(
+            FinancialTransaction.user_id == user_id,
+            FinancialTransaction.type == "expense",
+        )
+    )
+    candidates = {
+        normalize_language(candidate)
+        for candidate in [*category_names, *descriptions]
+        if candidate
+    }
+    return any(
+        _category_match_score(normalized_query, candidate)
+        >= CATEGORY_MATCH_THRESHOLD
+        for candidate in candidates
+    )
+
+
+def _category_match_score(requested: str, candidate: str) -> float:
+    if not requested or not candidate:
+        return 0.0
+    if requested == candidate:
+        return 1.0
+    if min(len(requested), len(candidate)) >= 4 and requested in candidate:
+        return 0.9
+    return SequenceMatcher(None, requested, candidate).ratio()
 
 
 def _category_name(transaction: FinancialTransaction) -> str:

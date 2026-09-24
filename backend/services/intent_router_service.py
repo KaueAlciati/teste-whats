@@ -175,6 +175,17 @@ def route_deterministic_intent(
         "month": _named_month(normalized),
     }
 
+    transaction_list = _transaction_list_query(normalized)
+    if transaction_list is not None:
+        limit, transaction_type = transaction_list
+        return _decision(
+            "consultar_ultimas_transacoes",
+            0.98,
+            limit=limit,
+            transaction_type=transaction_type,
+            **period_params,
+        )
+
     if re.search(
         r"\b(maior (?:gasto|despesa)|coisa mais cara|mais cara que paguei)\b",
         normalized,
@@ -212,25 +223,6 @@ def route_deterministic_intent(
             "consultar_gasto_categoria",
             0.97,
             category=category,
-            **period_params,
-        )
-
-    if re.search(
-        r"\b(ultimos?\s+\d*\s*(?:gastos?|despesas?|movimentacoes?)|"
-        r"gastei por ultimo|ultimos? gasto)\b",
-        normalized,
-    ):
-        limit_match = re.search(r"\b(\d{1,2})\b", normalized)
-        transaction_type = (
-            "expense"
-            if re.search(r"\b(gasto|gastos|despesa|despesas)\b", normalized)
-            else None
-        )
-        return _decision(
-            "consultar_ultimas_transacoes",
-            0.98,
-            limit=min(int(limit_match.group(1)), 10) if limit_match else 5,
-            transaction_type=transaction_type,
             **period_params,
         )
 
@@ -334,8 +326,15 @@ def _expense_category_query(normalized: str) -> str | None:
         return None
     category = match.group(1)
     category = re.sub(
-        r"\b(?:hoje|ontem|anteontem|essa semana|semana passada|"
-        r"esse mes|mes passado|nos ultimos \d+ dias)\b.*$",
+        rf"\b\d{{1,2}}\s+de\s+(?:{'|'.join(MONTH_NAMES)})"
+        r"(?:\s+de\s+\d{4})?\b.*$",
+        "",
+        category,
+    ).strip()
+    category = re.sub(
+        r"\b(?:hoje|ontem|anteontem|(?:essa|esta|nesta) semana|"
+        r"semana passada|ultima semana|(?:esse|este|neste|deste|desse) mes|"
+        r"mes atual|mes passado|mes anterior|nos ultimos \d+ dias)\b.*$",
         "",
         category,
     ).strip()
@@ -351,7 +350,44 @@ def _expense_category_query(normalized: str) -> str | None:
         "mes passado",
     }:
         return None
+    if re.fullmatch(r"\d{1,2}(?:\s+\d{1,2})(?:\s+\d{4})?", category):
+        return None
     return category or None
+
+
+def _transaction_list_query(normalized: str) -> tuple[int, str | None] | None:
+    patterns = (
+        r"\bultimos?\s+(?:(\d+)\s+)?(gastos?|despesas?|movimentacoes?)\b",
+        r"\b(?:me\s+)?mostra(?:\s+meus?)?\s+(\d+)\s+"
+        r"(gastos?|despesas?|movimentacoes?)\b",
+        r"\b(?:quais\s+foram\s+)?(?:meus?\s+)?(\d+)\s+"
+        r"maiores?\s+(gastos?|despesas?)\b",
+        r"\bgastei\s+por\s+ultimo\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, normalized)
+        if match is None:
+            continue
+        groups = match.groups()
+        quantity = next(
+            (int(value) for value in groups if value is not None and value.isdigit()),
+            5,
+        )
+        noun = next(
+            (
+                value
+                for value in groups
+                if value is not None
+                and re.fullmatch(r"gastos?|despesas?|movimentacoes?", value)
+            ),
+            None,
+        )
+        return max(1, min(quantity, 20)), (
+            "expense"
+            if noun is not None and re.fullmatch(r"gastos?|despesas?", noun)
+            else None
+        )
+    return None
 
 
 def _goal_statement_name(normalized: str) -> str | None:
