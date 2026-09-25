@@ -94,6 +94,37 @@ class FinancialServiceTestCase(unittest.TestCase):
         )
         self.assertEqual(transaction_count, 1)
 
+    def test_user_cannot_associate_another_users_personal_category(self) -> None:
+        other_user = get_or_create_whatsapp_user(
+            self.session,
+            "5515888888888",
+        )
+        foreign_category = Category(
+            name="Categoria privada",
+            type="expense",
+            user_id=other_user.id,
+        )
+        self.session.add(foreign_category)
+        self.session.commit()
+        self.session.refresh(foreign_category)
+
+        with self.assertRaisesRegex(LookupError, "Categoria não encontrada"):
+            create_transaction(
+                self.session,
+                user_id=self.user.id,
+                type="expense",
+                amount=Decimal("25.00"),
+                description="Tentativa com categoria alheia",
+                category_id=foreign_category.id,
+                transaction_date=date(2026, 9, 18),
+                source="dashboard_manual",
+            )
+
+        transaction_count = self.session.scalar(
+            select(func.count(FinancialTransaction.id))
+        )
+        self.assertEqual(transaction_count, 0)
+
     def _create_transaction(
         self,
         *,

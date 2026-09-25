@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -60,6 +60,17 @@ def create_transaction(
         raise ValueError("Tipo de movimentação inválido")
     if source not in TRANSACTION_SOURCES:
         raise ValueError("Origem da movimentação inválida")
+
+    if category_id is not None:
+        category = db.scalar(
+            select(Category).where(
+                Category.id == category_id,
+                Category.type == type,
+                or_(Category.user_id.is_(None), Category.user_id == user_id),
+            )
+        )
+        if category is None:
+            raise LookupError("Categoria não encontrada")
 
     if whatsapp_message_id:
         existing_transaction = db.scalar(

@@ -203,6 +203,11 @@ class GoalsApiTestCase(unittest.TestCase):
             f"/api/goals/{goal_id}/contributions",
             headers=self._headers(self.other_token),
         )
+        forbidden_create = self.client.post(
+            f"/api/goals/{goal_id}/contributions",
+            json={"amount": 50},
+            headers=self._headers(self.other_token),
+        )
 
         self.assertEqual(created.status_code, 201)
         self.assertEqual(created.json()["amount"], 125.5)
@@ -210,6 +215,7 @@ class GoalsApiTestCase(unittest.TestCase):
         self.assertEqual(created.json()["current_amount"], 125.5)
         self.assertEqual(len(listed.json()), 1)
         self.assertEqual(forbidden.status_code, 404)
+        self.assertEqual(forbidden_create.status_code, 404)
 
     def _create(self, token: str, *, name: str):
         return self.client.post(

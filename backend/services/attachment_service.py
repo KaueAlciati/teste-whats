@@ -207,9 +207,14 @@ def get_transaction_attachment(
 ) -> TransactionAttachment | None:
     return db.scalar(
         select(TransactionAttachment)
+        .join(
+            FinancialTransaction,
+            FinancialTransaction.id == TransactionAttachment.transaction_id,
+        )
         .where(
             TransactionAttachment.user_id == user_id,
             TransactionAttachment.transaction_id == transaction_id,
+            FinancialTransaction.user_id == user_id,
         )
         .order_by(TransactionAttachment.id)
         .limit(1)

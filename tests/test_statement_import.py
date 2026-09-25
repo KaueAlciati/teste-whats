@@ -1,6 +1,9 @@
 import base64
+import hashlib
 import os
 import unittest
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -322,6 +325,46 @@ class StatementImportApiTestCase(unittest.TestCase):
             duplicate_preview.json()["rows"][0]["status"],
             "possible_duplicate",
         )
+
+    def test_attachment_download_validates_transaction_owner_chain(self) -> None:
+        content = b"%PDF-1.7 private-user-b"
+        storage_key = "users/idor/foreign-attachment.pdf"
+        stored_path = Path(self.attachment_storage.name) / storage_key
+        stored_path.parent.mkdir(parents=True, exist_ok=True)
+        stored_path.write_bytes(content)
+
+        with self.session_factory() as db:
+            foreign_transaction = FinancialTransaction(
+                user_id=self.other_user.id,
+                type="expense",
+                amount=Decimal("99.00"),
+                description="Comprovante privado de B",
+                transaction_date=date(2026, 9, 22),
+                source="dashboard_manual",
+            )
+            db.add(foreign_transaction)
+            db.flush()
+            db.add(
+                TransactionAttachment(
+                    user_id=self.user.id,
+                    transaction_id=foreign_transaction.id,
+                    storage_key=storage_key,
+                    original_filename="privado.pdf",
+                    mime_type="application/pdf",
+                    size_bytes=len(content),
+                    sha256=hashlib.sha256(content).hexdigest(),
+                )
+            )
+            db.commit()
+            transaction_id = foreign_transaction.id
+
+        response = self.client.get(
+            f"/api/transactions/{transaction_id}/attachment",
+            headers=self._headers(self.token),
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertNotIn(content, response.content)
 
     def test_one_document_is_stored_once_and_linked_to_all_imported_rows(self) -> None:
         extraction = self._document_extraction()
