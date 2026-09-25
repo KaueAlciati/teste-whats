@@ -493,6 +493,8 @@ class GoalWhatsAppTestCase(unittest.TestCase):
             "quanto falta para minha meta de carro?",
             "quanto falta pro carro?",
             "como está minha meta carro?",
+            "quanto falta para o Carro?",
+            "quanto tenho guardado no carro?",
         )
 
         for index, phrase in enumerate(phrases):
@@ -518,14 +520,29 @@ class GoalWhatsAppTestCase(unittest.TestCase):
             target_date=None,
         )
 
-        response = self._message(
+        text_response = self._message(
             self.user,
-            "Quanto falta para minha meta de carro?",
-            "wamid.explicit-goal-audio",
-            source="whatsapp_audio",
-            audio_transcription="Quanto falta para minha meta de carro?",
+            "quanto falta para minha meta de carro?",
+            "wamid.explicit-goal-text-reference",
         )
+        self.session.execute(
+            delete(GoalContext).where(GoalContext.user_id == self.user.id)
+        )
+        self.session.commit()
 
+        with patch(
+            "backend.services.financial_assistant_service.interpret_financial_message"
+        ) as interpret_mock:
+            response = self._message(
+                self.user,
+                "Quanto falta para minha meta de carro?",
+                "wamid.explicit-goal-audio",
+                source="whatsapp_audio",
+                audio_transcription="Quanto falta para minha meta de carro?",
+            )
+
+        interpret_mock.assert_not_called()
+        self.assertEqual(response, text_response)
         self.assertIn("Carro", response)
         self.assertIn("R$ 50.000,00", response)
         self.assertNotIn("Entendi:", response)

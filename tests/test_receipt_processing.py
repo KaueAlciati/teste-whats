@@ -63,11 +63,6 @@ class ReceiptProcessingTestCase(unittest.TestCase):
         self.session.add_all(
             [
                 Category(
-                    name="Trabalho",
-                    type="expense",
-                    is_default=True,
-                ),
-                Category(
                     name="Transporte",
                     type="expense",
                     is_default=True,
@@ -290,6 +285,18 @@ class ReceiptProcessingTestCase(unittest.TestCase):
                 "Transporte",
                 "Transporte",
             ),
+            (
+                "Categoria TRABALHO",
+                "category_suggestion",
+                "Trabalho",
+                "Trabalho",
+            ),
+            (
+                "coloca na categoria trabalho",
+                "category_suggestion",
+                "Trabalho",
+                "Trabalho",
+            ),
             ("o valor era 180", "amount", "180.00", "R$ 180,00"),
             (
                 "a descrição é manutenção",
@@ -320,16 +327,72 @@ class ReceiptProcessingTestCase(unittest.TestCase):
                 self.assertNotIn("Qual o valor", result.response)
                 self.assertIsNone(self._transaction(message_id))
 
-    def test_unknown_receipt_category_is_not_invented(self) -> None:
-        self._process("receipt-invalid-category", self._extraction())
+        trabalho_categories = list(
+            self.session.scalars(
+                select(Category).where(
+                    Category.user_id == self.user.id,
+                    Category.name == "Trabalho",
+                    Category.type == "expense",
+                )
+            )
+        )
+        self.assertEqual(len(trabalho_categories), 1)
 
-        result = self._reply("categoria teletransporte")
-        pending = self._pending("receipt-invalid-category")
+    def test_explicit_custom_category_is_created_and_saved_with_receipt(self) -> None:
+        self._process(
+            "receipt-custom-category",
+            self._extraction(
+                amount="175.00",
+                description="PIX para ETROS COMUNICACAO VISUAL",
+            ),
+            source="whatsapp_document",
+        )
 
-        self.assertTrue(result.handled)
-        self.assertIn("Não encontrei essa categoria", result.response)
-        self.assertIsNone(pending.extracted_data["category_suggestion"])
-        self.assertIsNone(self._transaction("receipt-invalid-category"))
+        corrected = self._reply("categoria trabalho")
+        category = self.session.scalar(
+            select(Category).where(
+                Category.user_id == self.user.id,
+                Category.name == "Trabalho",
+                Category.type == "expense",
+            )
+        )
+        confirmed = self._reply("sim")
+        transaction = self._transaction("receipt-custom-category")
+        attachment = self._attachment(transaction.id)
+
+        self.assertTrue(corrected.handled)
+        self.assertIn("Trabalho", corrected.response)
+        self.assertIsNotNone(category)
+        self.assertFalse(category.is_default)
+        self.assertTrue(confirmed.handled)
+        self.assertEqual(transaction.category_id, category.id)
+        self.assertEqual(transaction.source, "whatsapp_document")
+        self.assertEqual(attachment.mime_type, "application/pdf")
+        self.assertIsNone(self._pending("receipt-custom-category"))
+
+    def test_custom_receipt_category_is_isolated_by_user(self) -> None:
+        self._process("receipt-user-category", self._extraction())
+        self._reply("categoria trabalho")
+        other_user = get_or_create_whatsapp_user(
+            self.session,
+            "5515888888888",
+        )
+
+        own_category = self.session.scalar(
+            select(Category).where(
+                Category.user_id == self.user.id,
+                Category.name == "Trabalho",
+            )
+        )
+        other_category = self.session.scalar(
+            select(Category).where(
+                Category.user_id == other_user.id,
+                Category.name == "Trabalho",
+            )
+        )
+
+        self.assertIsNotNone(own_category)
+        self.assertIsNone(other_category)
 
     def _reply(self, text: str):
         return handle_pending_receipt_reply(

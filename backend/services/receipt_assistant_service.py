@@ -27,6 +27,7 @@ from backend.services.attachment_service import (
 from backend.services.category_service import (
     find_existing_category,
     find_matching_existing_category,
+    get_or_create_user_category,
 )
 from backend.services.conversation_service import (
     image_error_response,
@@ -761,10 +762,11 @@ def _pending_receipt_correction(
                 transaction_type=requested_type,
             )
             if category is None:
-                return (
-                    {},
-                    "Não encontrei essa categoria. Informe outra categoria válida "
-                    "ou diga *sem categoria*.",
+                category = get_or_create_user_category(
+                    db,
+                    user_id=user_id,
+                    category_name=_category_display_name(category_name or ""),
+                    transaction_type=requested_type,
                 )
             changes["category_suggestion"] = category.name
 
@@ -818,7 +820,11 @@ def _corrected_receipt_description(text: str) -> str | None:
 def _corrected_receipt_category(text: str) -> tuple[bool, str | None]:
     patterns = (
         r"\bmuda\s+a\s+categoria\s+para\s+(.+)$",
+        r"\bcoloca\s+na\s+categoria\s+(.+)$",
         r"\b(?:esse|isso)\s+e\s+da\s+categoria\s+(.+)$",
+        r"\besse\s+comprovante\s+e\s+(.+)$",
+        r"\bmarca\s+como\s+(.+)$",
+        r"\bcria\s+categoria\s+(.+)$",
         r"\bcategoria\s+(?:e|é|era|para)?\s*(.+)$",
         r"\bcoloca\s+em\s+(.+)$",
     )
@@ -837,12 +843,17 @@ def _corrected_receipt_category(text: str) -> tuple[bool, str | None]:
 
 def _trim_receipt_correction_value(value: str) -> str:
     cleaned = re.split(
-        r"\s+(?:no|do|o)\s+comprovante\b|\s+arrum[ae]\b|\s+pra\s+mim\b",
+        r"\s+(?:no|do|o)\s+comprovante\b|\s+arrum[ae]\b|"
+        r"\s+marque\b|\s+pra\s+(?:mim|esse\s+gasto)\b",
         value,
         maxsplit=1,
         flags=re.IGNORECASE,
     )[0]
     return " ".join(cleaned.strip(" .,!?:;-").split())
+
+
+def _category_display_name(value: str) -> str:
+    return " ".join(value.strip().split()).title()
 
 
 def _classify_pending_reply(text: str) -> tuple[str | None, Decimal | None]:

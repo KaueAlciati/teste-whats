@@ -379,9 +379,32 @@ def _goal_query_response(
     action: str,
 ) -> str:
     normalized = _normalize(text)
+    goals = list_goals(db, user_id=user_id)
+    explicit_matches = _goals_explicitly_named(goals, normalized)
+    if len(explicit_matches) == 1:
+        goal = explicit_matches[0]
+        select_goal_context(
+            db,
+            user_id=user_id,
+            goal=goal,
+            current_time=current_time,
+        )
+        return _goal_action_response(action, goal)
+    if len(explicit_matches) > 1:
+        begin_goal_selection(
+            db,
+            user_id=user_id,
+            goal_ids=[item.id for item in explicit_matches],
+            current_time=current_time,
+            action=action,
+            original_message=text,
+            source=source,
+        )
+        names = " ou ".join(item.name for item in explicit_matches[:2])
+        return f"Qual meta você quer consultar: {names}?"
+
     explicit_name = _explicit_goal_name(normalized)
     if explicit_name:
-        goals = list_goals(db, user_id=user_id)
         if not goals:
             return 'Você ainda não tem metas. Envie "criar meta Viagem 3000".'
         goal, alternatives, possible_match = _resolve_goal_name(
@@ -442,6 +465,31 @@ def _explicit_goal_name(normalized: str) -> str | None:
         if match is not None:
             return match.group(1).strip()
     return None
+
+
+def _goals_explicitly_named(goals: list[Goal], normalized: str) -> list[Goal]:
+    matches = [
+        goal
+        for goal in goals
+        if _normalize(goal.name) not in {"meta", "objetivo"}
+        and re.search(
+            rf"\b{re.escape(_normalize(goal.name))}\b",
+            normalized,
+        )
+    ]
+    if len(matches) < 2:
+        return matches
+    normalized_names = {goal.id: _normalize(goal.name) for goal in matches}
+    return [
+        goal
+        for goal in matches
+        if not any(
+            normalized_names[goal.id] != other_name
+            and normalized_names[goal.id] in other_name
+            for other_id, other_name in normalized_names.items()
+            if other_id != goal.id
+        )
+    ]
 
 
 def _goal_from_command_or_context(
