@@ -17,7 +17,7 @@ from backend.schemas.auth import (
 )
 from backend.services.email_service import (
     EmailConfigurationError,
-    get_smtp_settings,
+    get_resend_settings,
     send_password_reset_email_safely,
 )
 from backend.services.password_reset_service import (
@@ -132,7 +132,7 @@ def forgot_password(
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
     try:
-        smtp_settings = get_smtp_settings()
+        resend_settings = get_resend_settings()
         reset_request = create_password_reset_token(
             db,
             email=str(payload.email),
@@ -149,7 +149,7 @@ def forgot_password(
             send_password_reset_email_safely,
             recipient_email,
             raw_token,
-            smtp_settings,
+            resend_settings,
         )
     return {
         "message": (

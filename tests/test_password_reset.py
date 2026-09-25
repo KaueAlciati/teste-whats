@@ -4,6 +4,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 
+import httpx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
@@ -13,7 +14,14 @@ from backend.database.base import Base
 from backend.database.connection import get_db
 from backend.main import app
 from backend.models import PasswordResetToken, User  # noqa: F401
-from backend.services.email_service import SMTPSettings, send_password_reset_email
+from backend.services.email_service import (
+    RESEND_EMAILS_URL,
+    RESEND_TIMEOUT_SECONDS,
+    EmailDeliveryError,
+    ResendSettings,
+    send_password_reset_email,
+    send_password_reset_email_safely,
+)
 
 
 GENERIC_MESSAGE = (
@@ -46,11 +54,8 @@ class PasswordResetApiTestCase(unittest.TestCase):
                 "JWT_EXPIRE_MINUTES": "60",
                 "PASSWORD_RESET_EXPIRE_MINUTES": "30",
                 "FRONTEND_URL": "https://fincontrol.example",
-                "SMTP_HOST": "smtp.example.com",
-                "SMTP_PORT": "587",
-                "SMTP_USERNAME": "smtp-user",
-                "SMTP_PASSWORD": "smtp-secret",
-                "SMTP_FROM_EMAIL": "contato@fincontrol.example",
+                "RESEND_API_KEY": "re_test-secret",
+                "RESEND_FROM_EMAIL": "contato@fincontrol.example",
             },
             clear=False,
         )
@@ -77,6 +82,7 @@ class PasswordResetApiTestCase(unittest.TestCase):
         recipient, raw_token, _settings = email_mock.call_args.args
         self.assertEqual(recipient, "kaue@example.com")
         self.assertGreaterEqual(len(raw_token), 40)
+        self.assertIsInstance(_settings, ResendSettings)
 
         with self.session_factory() as db:
             stored = db.scalar(select(PasswordResetToken))
@@ -212,38 +218,107 @@ class PasswordResetApiTestCase(unittest.TestCase):
 
 
 class PasswordResetEmailTestCase(unittest.TestCase):
-    def test_email_uses_starttls_and_contains_frontend_link(self) -> None:
-        settings = SMTPSettings(
-            host="smtp.example.com",
-            port=587,
-            username="smtp-user",
-            password="smtp-secret",
+    def setUp(self) -> None:
+        self.settings = ResendSettings(
+            api_key="re_test-secret",
             from_email="contato@fincontrol.example",
             frontend_url="https://fincontrol.example",
         )
-        smtp_client = Mock()
-        smtp_context = Mock()
-        smtp_context.__enter__ = Mock(return_value=smtp_client)
-        smtp_context.__exit__ = Mock(return_value=False)
+
+    def test_email_posts_to_resend_and_contains_frontend_link(self) -> None:
+        response = Mock()
+        response.raise_for_status.return_value = None
 
         with patch(
-            "backend.services.email_service.smtplib.SMTP",
-            return_value=smtp_context,
-        ):
+            "backend.services.email_service.httpx.post",
+            return_value=response,
+        ) as post_mock:
             send_password_reset_email(
                 "kaue@example.com",
                 "secure-token",
-                settings=settings,
+                settings=self.settings,
             )
 
-        smtp_client.starttls.assert_called_once()
-        smtp_client.login.assert_called_once_with("smtp-user", "smtp-secret")
-        message = smtp_client.send_message.call_args.args[0]
+        post_mock.assert_called_once()
+        args, kwargs = post_mock.call_args
+        self.assertEqual(args, (RESEND_EMAILS_URL,))
+        self.assertEqual(kwargs["timeout"], RESEND_TIMEOUT_SECONDS)
+        self.assertEqual(
+            kwargs["headers"]["Authorization"],
+            "Bearer re_test-secret",
+        )
+        payload = kwargs["json"]
+        self.assertEqual(
+            payload["subject"],
+            "Recuperação de senha — FinControl AI",
+        )
+        self.assertEqual(
+            payload["from"],
+            "FinControl AI <contato@fincontrol.example>",
+        )
+        self.assertEqual(payload["to"], ["kaue@example.com"])
         self.assertIn(
             "https://fincontrol.example/reset-password?token=secure-token",
-            message.get_body(preferencelist=("plain",)).get_content(),
+            payload["text"],
         )
-        self.assertNotIn("smtp-secret", message.as_string())
+        self.assertIn("FinControl AI", payload["html"])
+        self.assertIn("expira", payload["text"])
+        self.assertIn("ignore", payload["text"])
+        self.assertNotIn("re_test-secret", str(payload))
+        response.raise_for_status.assert_called_once_with()
+
+    def test_resend_error_raises_delivery_error(self) -> None:
+        request = httpx.Request("POST", RESEND_EMAILS_URL)
+        response = Mock()
+        response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "Resend rejected the request",
+            request=request,
+            response=httpx.Response(422, request=request),
+        )
+
+        with patch(
+            "backend.services.email_service.httpx.post",
+            return_value=response,
+        ):
+            with self.assertRaisesRegex(
+                EmailDeliveryError,
+                "Não foi possível enviar o e-mail",
+            ):
+                send_password_reset_email(
+                    "kaue@example.com",
+                    "secure-token",
+                    settings=self.settings,
+                )
+
+    def test_resend_timeout_raises_delivery_error(self) -> None:
+        with patch(
+            "backend.services.email_service.httpx.post",
+            side_effect=httpx.TimeoutException("timeout"),
+        ):
+            with self.assertRaises(EmailDeliveryError):
+                send_password_reset_email(
+                    "kaue@example.com",
+                    "secure-token",
+                    settings=self.settings,
+                )
+
+    def test_safe_delivery_does_not_log_recovery_token(self) -> None:
+        token = "secret-recovery-token-that-must-not-be-logged"
+        with patch(
+            "backend.services.email_service.send_password_reset_email",
+            side_effect=EmailDeliveryError("delivery failed"),
+        ):
+            with self.assertLogs("uvicorn.error", level="ERROR") as captured:
+                send_password_reset_email_safely(
+                    "kaue@example.com",
+                    token,
+                    self.settings,
+                )
+
+        logs = "\n".join(captured.output)
+        self.assertNotIn(token, logs)
+        self.assertNotIn(self.settings.api_key, logs)
+        self.assertIn("EmailDeliveryError", logs)
 
 
 if __name__ == "__main__":
