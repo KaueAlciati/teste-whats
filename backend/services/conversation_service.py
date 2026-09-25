@@ -568,6 +568,33 @@ def pending_receipt_amount_updated_response(amount: Decimal) -> str:
     )
 
 
+def pending_receipt_updated_response(
+    *,
+    amount: Decimal,
+    description: str,
+    transaction_date: date,
+    direction: str,
+    category: str,
+) -> str:
+    direction_label = {
+        "outflow": "Saída",
+        "inflow": "Entrada",
+        "unknown": "Não identificado",
+    }.get(direction, "Não identificado")
+    direction_emoji = "⬆️" if direction == "outflow" else "⬇️"
+    if direction == "unknown":
+        direction_emoji = "↕️"
+    return (
+        "🧾 *Comprovante atualizado*\n\n"
+        f"💰 Valor: *{format_brl(amount)}*\n"
+        f"📝 Descrição: {_display_text(description)}\n"
+        f"📅 Data: {transaction_date.strftime('%d/%m/%Y')}\n"
+        f"{direction_emoji} Tipo: {direction_label}\n"
+        f"📁 Categoria: *{category}*\n\n"
+        "Está certo agora?"
+    )
+
+
 def format_audio_understanding(
     transcription: str,
     response: str,

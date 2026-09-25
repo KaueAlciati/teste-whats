@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.orm import sessionmaker
 
 from backend.database.base import Base
@@ -11,7 +11,9 @@ from backend.models import (
     Category,
     FinancialTransaction,
     Goal,
+    GoalContext,
     GoalContribution,
+    IntentClarification,
     User,
 )
 from backend.schemas.financial_intent import FinancialIntent
@@ -134,7 +136,8 @@ class GoalWhatsAppTestCase(unittest.TestCase):
         )
 
         contribution = self.session.scalar(select(GoalContribution))
-        self.assertIn('Entendi: "adiciona 50"', response)
+        self.assertNotIn("Entendi:", response)
+        self.assertIn("R$ 50,00", response)
         self.assertEqual(contribution.source, "whatsapp_audio")
         self.assertEqual(float(contribution.amount), 50.0)
 
@@ -426,7 +429,7 @@ class GoalWhatsAppTestCase(unittest.TestCase):
             audio_transcription="quero a viagem",
         )
 
-        self.assertIn('Entendi: "quero a viagem"', response)
+        self.assertNotIn("Entendi:", response)
         self.assertIn('Meta "Viagem" selecionada', response)
 
     def test_audio_transcription_uses_same_fuzzy_goal_resolver(self) -> None:
@@ -451,7 +454,7 @@ class GoalWhatsAppTestCase(unittest.TestCase):
             audio_transcription="testi",
         )
 
-        self.assertIn('Entendi: "testi"', response)
+        self.assertNotIn("Entendi:", response)
         self.assertIn('Meta "Teste" selecionada', response)
 
     def test_audio_goal_list_uses_same_routing_after_transcription(self) -> None:
@@ -474,9 +477,104 @@ class GoalWhatsAppTestCase(unittest.TestCase):
                 audio_transcription="Mostra minhas metas.",
             )
 
-        self.assertIn('Entendi: "Mostra minhas metas."', response)
+        self.assertNotIn("Entendi:", response)
         self.assertIn("Notebook", response)
         interpret_mock.assert_not_called()
+
+    def test_explicit_goal_queries_resolve_without_previous_selection(self) -> None:
+        create_goal(
+            self.session,
+            user_id=self.user.id,
+            name="Carro",
+            target_amount=50000,
+            target_date=None,
+        )
+        phrases = (
+            "quanto falta para minha meta de carro?",
+            "quanto falta pro carro?",
+            "como está minha meta carro?",
+        )
+
+        for index, phrase in enumerate(phrases):
+            with self.subTest(phrase=phrase):
+                response = self._message(
+                    self.user,
+                    phrase,
+                    f"wamid.explicit-goal-{index}",
+                )
+                self.assertIn("Carro", response)
+                self.assertIn("R$ 50.000,00", response)
+                self.session.execute(
+                    delete(GoalContext).where(GoalContext.user_id == self.user.id)
+                )
+                self.session.commit()
+
+    def test_explicit_goal_audio_uses_same_clean_flow_as_text(self) -> None:
+        create_goal(
+            self.session,
+            user_id=self.user.id,
+            name="Carro",
+            target_amount=50000,
+            target_date=None,
+        )
+
+        response = self._message(
+            self.user,
+            "Quanto falta para minha meta de carro?",
+            "wamid.explicit-goal-audio",
+            source="whatsapp_audio",
+            audio_transcription="Quanto falta para minha meta de carro?",
+        )
+
+        self.assertIn("Carro", response)
+        self.assertIn("R$ 50.000,00", response)
+        self.assertNotIn("Entendi:", response)
+
+    def test_ambiguous_goal_query_persists_and_continues_original_action(self) -> None:
+        create_goal(
+            self.session,
+            user_id=self.user.id,
+            name="Carro Novo",
+            target_amount=50000,
+            target_date=None,
+        )
+        create_goal(
+            self.session,
+            user_id=self.user.id,
+            name="Carro Usado",
+            target_amount=30000,
+            target_date=None,
+        )
+
+        question = self._message(
+            self.user,
+            "quanto falta pro carro?",
+            "wamid.ambiguous-goal-query",
+        )
+        pending = self.session.scalar(
+            select(IntentClarification).where(
+                IntentClarification.user_id == self.user.id
+            )
+        )
+        answer = self._message(
+            self.user,
+            "a do carro novo",
+            "wamid.ambiguous-goal-answer",
+        )
+
+        self.assertIn("Carro Novo", question)
+        self.assertIn("Carro Usado", question)
+        self.assertIsNotNone(pending)
+        self.assertEqual(pending.suggested_intent, "goal_selection")
+        self.assertIn('meta "Carro Novo"', answer)
+        self.assertIn("R$ 50.000,00", answer)
+        self.assertIsNone(
+            self.session.scalar(
+                select(IntentClarification).where(
+                    IntentClarification.user_id == self.user.id
+                )
+            )
+        )
 
     def test_audio_expense_continues_in_normal_financial_flow(self) -> None:
         self.session.add(

@@ -67,8 +67,46 @@ class TransactionCorrectionTestCase(unittest.TestCase):
         self.assertEqual(len(transactions), 1)
         self.assertEqual(transactions[0].amount, Decimal("50.00"))
         self.assertEqual(transactions[0].source, "whatsapp_audio")
-        self.assertIn("🎧 Entendi", audio_response)
+        self.assertNotIn("Entendi:", audio_response)
+        self.assertIn("Despesa registrada", audio_response)
         self.assertIn("R$ 50,00", correction_response)
+
+    def test_audio_expense_then_audio_amount_correction_regression(self) -> None:
+        creation = self._intent(
+            action="create_expense",
+            amount=15,
+            description="gasolina",
+            category="Transporte",
+            transaction_date="2026-09-18",
+            confidence=0.98,
+        )
+        correction = self._intent(
+            action="correct_last_transaction",
+            amount=10,
+            confidence=0.98,
+        )
+
+        self._handle(
+            "Gastei 15 reais de gasolina",
+            creation,
+            "audio-regression-original",
+            source="whatsapp_audio",
+            audio_transcription="Gastei 15 reais de gasolina",
+        )
+        response = self._handle(
+            "Ah, não era 15 reais, era 10",
+            correction,
+            "audio-regression-correction",
+            source="whatsapp_audio",
+            audio_transcription="Ah, não era 15 reais, era 10",
+        )
+
+        transactions = list(self.session.scalars(select(FinancialTransaction)))
+        self.assertEqual(len(transactions), 1)
+        self.assertEqual(transactions[0].amount, Decimal("10.00"))
+        self.assertEqual(transactions[0].source, "whatsapp_audio")
+        self.assertIn("R$ 10,00", response)
+        self.assertNotIn("Entendi:", response)
 
     def test_description_correction_updates_latest_transaction(self) -> None:
         transaction = self._create_recent_transaction(

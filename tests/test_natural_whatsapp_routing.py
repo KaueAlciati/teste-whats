@@ -238,7 +238,7 @@ class NaturalWhatsAppRoutingTestCase(unittest.TestCase):
             audio_transcription="como ta minhas finança",
         )
 
-        self.assertIn('Entendi: "como ta minhas finança"', response)
+        self.assertNotIn("Entendi:", response)
         self.assertIn("score", response)
 
     def test_audio_unrecognized_message_keeps_audio_source(self) -> None:

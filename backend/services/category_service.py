@@ -1,4 +1,5 @@
 import unicodedata
+from difflib import SequenceMatcher
 
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
@@ -54,6 +55,53 @@ def find_existing_category(
         if _normalize_category_name(category.name) == requested_name:
             return category
     return None
+
+
+def find_matching_existing_category(
+    db: Session,
+    *,
+    user_id: int,
+    category_name: str,
+    transaction_type: str,
+    threshold: float = 0.86,
+    ambiguity_margin: float = 0.08,
+) -> Category | None:
+    requested_name = _normalize_category_name(category_name)
+    if not requested_name:
+        return None
+    categories = _available_categories(
+        db,
+        user_id=user_id,
+        transaction_type=transaction_type,
+    )
+    exact = [
+        category
+        for category in categories
+        if _normalize_category_name(category.name) == requested_name
+    ]
+    if exact:
+        return exact[0]
+
+    ranked = sorted(
+        (
+            (
+                SequenceMatcher(
+                    None,
+                    requested_name,
+                    _normalize_category_name(category.name),
+                ).ratio(),
+                category,
+            )
+            for category in categories
+        ),
+        key=lambda item: item[0],
+        reverse=True,
+    )
+    if not ranked or ranked[0][0] < threshold:
+        return None
+    if len(ranked) > 1 and ranked[0][0] - ranked[1][0] < ambiguity_margin:
+        return None
+    return ranked[0][1]
 
 
 def get_or_create_user_category(

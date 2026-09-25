@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from threading import RLock
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -8,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from backend.models.goal import Goal
 from backend.models.goal_context import GoalContext
+from backend.models.intent_clarification import IntentClarification
 
 
 GOAL_CONTEXT_TTL = timedelta(minutes=30)
@@ -16,11 +16,11 @@ GOAL_CONTEXT_TTL = timedelta(minutes=30)
 @dataclass(frozen=True)
 class PendingGoalSelection:
     goal_ids: tuple[int, ...]
+    action: str
     expires_at: datetime
 
 
-_pending_goal_selections: dict[tuple[object, int], PendingGoalSelection] = {}
-_pending_goal_selections_lock = RLock()
+GOAL_SELECTION_INTENT = "goal_selection"
 
 
 def begin_goal_selection(
@@ -29,16 +29,34 @@ def begin_goal_selection(
     user_id: int,
     goal_ids: list[int],
     current_time: datetime,
+    action: str = "select",
+    original_message: str = "",
+    source: str = "whatsapp_text",
 ) -> None:
-    key = (db.get_bind(), user_id)
-    with _pending_goal_selections_lock:
-        if not goal_ids:
-            _pending_goal_selections.pop(key, None)
-            return
-        _pending_goal_selections[key] = PendingGoalSelection(
-            goal_ids=tuple(goal_ids),
+    existing = db.scalar(
+        select(IntentClarification).where(IntentClarification.user_id == user_id)
+    )
+    if existing is not None:
+        db.delete(existing)
+        db.flush()
+    if not goal_ids:
+        db.commit()
+        return
+    db.add(
+        IntentClarification(
+            user_id=user_id,
+            unrecognized_message_id=None,
+            original_message=original_message[:4000],
+            suggested_intent=GOAL_SELECTION_INTENT,
+            candidates=[str(goal_id) for goal_id in goal_ids],
+            parameters={"goal_ids": goal_ids, "action": action},
+            source=(
+                "whatsapp_audio" if source == "whatsapp_audio" else "whatsapp_text"
+            ),
             expires_at=current_time + GOAL_CONTEXT_TTL,
         )
+    )
+    db.commit()
 
 
 def get_pending_goal_selection(
@@ -46,21 +64,43 @@ def get_pending_goal_selection(
     *,
     user_id: int,
     current_time: datetime,
-) -> tuple[int, ...] | None:
-    key = (db.get_bind(), user_id)
-    with _pending_goal_selections_lock:
-        pending = _pending_goal_selections.get(key)
-        if pending is None:
-            return None
-        if _is_expired(pending.expires_at, current_time):
-            _pending_goal_selections.pop(key, None)
-            return None
-        return pending.goal_ids
+) -> PendingGoalSelection | None:
+    clarification = db.scalar(
+        select(IntentClarification).where(
+            IntentClarification.user_id == user_id,
+            IntentClarification.suggested_intent == GOAL_SELECTION_INTENT,
+        )
+    )
+    if clarification is None:
+        return None
+    if _is_expired(clarification.expires_at, current_time):
+        db.delete(clarification)
+        db.commit()
+        return None
+    parameters = clarification.parameters or {}
+    raw_goal_ids = parameters.get("goal_ids", clarification.candidates or [])
+    try:
+        goal_ids = tuple(int(goal_id) for goal_id in raw_goal_ids)
+    except (TypeError, ValueError):
+        clear_pending_goal_selection(db, user_id=user_id)
+        return None
+    return PendingGoalSelection(
+        goal_ids=goal_ids,
+        action=str(parameters.get("action") or "select"),
+        expires_at=clarification.expires_at,
+    )
 
 
 def clear_pending_goal_selection(db: Session, *, user_id: int) -> None:
-    with _pending_goal_selections_lock:
-        _pending_goal_selections.pop((db.get_bind(), user_id), None)
+    clarification = db.scalar(
+        select(IntentClarification).where(
+            IntentClarification.user_id == user_id,
+            IntentClarification.suggested_intent == GOAL_SELECTION_INTENT,
+        )
+    )
+    if clarification is not None:
+        db.delete(clarification)
+        db.commit()
 
 
 def select_goal_context(

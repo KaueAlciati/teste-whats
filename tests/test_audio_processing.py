@@ -5,9 +5,7 @@ from unittest.mock import AsyncMock, call, patch
 from backend.services.conversation_service import (
     audio_empty_response,
     audio_error_response,
-    audio_processing_response,
     audio_too_large_response,
-    response_variant,
 )
 from backend.services.financial_assistant_service import (
     process_financial_audio_message,
@@ -79,10 +77,7 @@ class AudioProcessingTestCase(unittest.TestCase):
             source="whatsapp_audio",
             audio_transcription="gastei 80 reais de diesel hoje",
         )
-        send_mock.assert_awaited_once_with(
-            "5515999999999",
-            audio_processing_response(response_variant("wamid.audio")),
-        )
+        send_mock.assert_not_awaited()
 
     def test_goal_transcription_enters_the_same_message_flow(self) -> None:
         send_mock = AsyncMock(return_value=True)
@@ -129,7 +124,7 @@ class AudioProcessingTestCase(unittest.TestCase):
             )
 
         process_mock.assert_not_awaited()
-        self.assertEqual(send_mock.await_count, 2)
+        self.assertEqual(send_mock.await_count, 1)
         self.assertEqual(
             send_mock.await_args_list[-1],
             call("5515999999999", audio_empty_response()),

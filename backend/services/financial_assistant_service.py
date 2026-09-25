@@ -30,7 +30,6 @@ from backend.services.conversation_service import (
     ai_error_response,
     audio_empty_response,
     audio_error_response,
-    audio_processing_response,
     audio_too_large_response,
     balance_response,
     clarification_response,
@@ -129,12 +128,6 @@ async def process_financial_audio_message(
 
     if already_processed:
         return
-
-    variant = response_variant(whatsapp_message_id)
-    await send_text_message(
-        whatsapp_phone,
-        audio_processing_response(variant),
-    )
 
     try:
         media = await download_whatsapp_media(
@@ -267,11 +260,20 @@ def handle_financial_message(
         ZoneInfo("America/Sao_Paulo")
     )
     variant = response_variant(whatsapp_message_id)
+    audio_response_confidence: float | None = None
 
     def present(response: str | None) -> str | None:
         if response is None:
             return None
-        if source == "whatsapp_audio" and audio_transcription:
+        if (
+            source == "whatsapp_audio"
+            and audio_transcription
+            and (
+                audio_response_confidence is None
+                or audio_response_confidence
+                < AUDIO_AUTO_REGISTER_CONFIDENCE_THRESHOLD
+            )
+        ):
             return format_audio_understanding(
                 audio_transcription,
                 response,
@@ -326,16 +328,6 @@ def handle_financial_message(
         current_time=processing_time,
     )
     if goal_handled:
-        if (
-            goal_response
-            and source == "whatsapp_audio"
-            and audio_transcription
-        ):
-            return format_audio_understanding(
-                audio_transcription,
-                goal_response,
-                variant=variant,
-            )
         return goal_response
 
     statement_request = resolve_whatsapp_statement_request(
@@ -371,17 +363,15 @@ def handle_financial_message(
             deterministic_natural_intent
         )
     ):
-        return present(
-            _natural_intent_response(
-                db,
-                user=user,
-                text=text,
-                source=source,
-                decision=deterministic_natural_intent,
-                current_date=current_date,
-                current_time=processing_time,
-                variant=variant,
-            )
+        return _natural_intent_response(
+            db,
+            user=user,
+            text=text,
+            source=source,
+            decision=deterministic_natural_intent,
+            current_date=current_date,
+            current_time=processing_time,
+            variant=variant,
         )
 
     latest_transaction = get_latest_transaction_for_user(
@@ -399,6 +389,7 @@ def handle_financial_message(
         last_transaction_context=None if confirmed_audio else latest_context,
         pending_audio_correction=pending_audio_correction,
     )
+    audio_response_confidence = intent.confidence
     if confirmed_audio:
         intent = _complete_confirmed_audio_intent(
             intent,

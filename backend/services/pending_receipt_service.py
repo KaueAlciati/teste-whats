@@ -124,11 +124,26 @@ def update_pending_receipt_amount(
     user_id: int,
     amount: str,
 ) -> PendingReceipt:
+    return update_pending_receipt_fields(
+        db,
+        pending=pending,
+        user_id=user_id,
+        changes={"amount": amount},
+    )
+
+
+def update_pending_receipt_fields(
+    db: Session,
+    *,
+    pending: PendingReceipt,
+    user_id: int,
+    changes: dict[str, object],
+) -> PendingReceipt:
     if pending.user_id != user_id:
         raise PermissionError("Comprovante pendente pertence a outro usuário")
 
     extracted_data = dict(pending.extracted_data)
-    extracted_data["amount"] = amount
+    extracted_data.update(changes)
     pending.extracted_data = extracted_data
 
     try:

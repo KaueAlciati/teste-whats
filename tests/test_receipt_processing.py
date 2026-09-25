@@ -60,6 +60,21 @@ class ReceiptProcessingTestCase(unittest.TestCase):
         self.user.password_hash = "argon2-test-hash"
         self.user.active = True
         self.session.commit()
+        self.session.add_all(
+            [
+                Category(
+                    name="Trabalho",
+                    type="expense",
+                    is_default=True,
+                ),
+                Category(
+                    name="Transporte",
+                    type="expense",
+                    is_default=True,
+                ),
+            ]
+        )
+        self.session.commit()
         self.current_date = date(2026, 9, 18)
         self.current_time = datetime(
             2026,
@@ -259,6 +274,62 @@ class ReceiptProcessingTestCase(unittest.TestCase):
         self.assertTrue(result.handled)
         self.assertEqual(pending.extracted_data["amount"], "90.00")
         self.assertIsNone(self._transaction("image-correction"))
+
+    def test_pending_receipt_accepts_natural_field_corrections(self) -> None:
+        cases = (
+            ("categoria trabalho", "category_suggestion", "Trabalho", "Trabalho"),
+            (
+                "Categoria trabalho o comprovante arrume pra mim",
+                "category_suggestion",
+                "Trabalho",
+                "Trabalho",
+            ),
+            (
+                "muda a categoria para Transporte",
+                "category_suggestion",
+                "Transporte",
+                "Transporte",
+            ),
+            ("o valor era 180", "amount", "180.00", "R$ 180,00"),
+            (
+                "a descrição é manutenção",
+                "description",
+                "manutenção",
+                "Manutenção",
+            ),
+            (
+                "foi ontem",
+                "transaction_date",
+                "2026-09-17",
+                "17/09/2026",
+            ),
+            ("isso é uma entrada", "direction", "inflow", "Entrada"),
+        )
+        for index, (reply, field, expected_value, expected_response) in enumerate(cases):
+            with self.subTest(reply=reply):
+                message_id = f"receipt-field-correction-{index}"
+                self._process(message_id, self._extraction(amount="175.00"))
+
+                result = self._reply(reply)
+                pending = self._pending(message_id)
+
+                self.assertTrue(result.handled)
+                self.assertEqual(pending.extracted_data[field], expected_value)
+                self.assertIn("Comprovante atualizado", result.response)
+                self.assertIn(expected_response, result.response)
+                self.assertNotIn("Qual o valor", result.response)
+                self.assertIsNone(self._transaction(message_id))
+
+    def test_unknown_receipt_category_is_not_invented(self) -> None:
+        self._process("receipt-invalid-category", self._extraction())
+
+        result = self._reply("categoria teletransporte")
+        pending = self._pending("receipt-invalid-category")
+
+        self.assertTrue(result.handled)
+        self.assertIn("Não encontrei essa categoria", result.response)
+        self.assertIsNone(pending.extracted_data["category_suggestion"])
+        self.assertIsNone(self._transaction("receipt-invalid-category"))
 
     def _reply(self, text: str):
         return handle_pending_receipt_reply(

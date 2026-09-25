@@ -95,6 +95,8 @@ def resolve_intent_clarification(
     )
     if clarification is None:
         return None
+    if clarification.suggested_intent == "goal_selection":
+        return None
     if _expired(clarification.expires_at, current_time):
         db.delete(clarification)
         db.commit()

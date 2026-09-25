@@ -70,6 +70,7 @@ def handle_goal_whatsapp_message(
             db,
             user_id=user.id,
             current_time=current_time,
+            source=source,
         )
 
     if _is_create_goal_command(normalized):
@@ -89,33 +90,16 @@ def handle_goal_whatsapp_message(
             current_time=current_time,
         )
 
-    if normalized.startswith("quanto falta"):
-        goal = _goal_from_command_or_context(
+    goal_query_action = _goal_query_action(normalized)
+    if goal_query_action is not None:
+        return True, _goal_query_response(
             db,
             user_id=user.id,
             text=text,
+            source=source,
             current_time=current_time,
+            action=goal_query_action,
         )
-        if goal is None:
-            return True, _select_goal_prompt()
-        return True, (
-            f'Para a meta "{goal.name}", faltam '
-            f"{format_brl(_missing(goal))}."
-        )
-
-    if normalized.startswith("progresso") or normalized in {
-        "como esta minha meta",
-        "como esta a meta",
-    }:
-        goal = _goal_from_command_or_context(
-            db,
-            user_id=user.id,
-            text=text,
-            current_time=current_time,
-        )
-        if goal is None:
-            return True, _select_goal_prompt()
-        return True, _goal_progress_response(goal)
 
     if normalized in {"extrato", "extrato da meta", "historico", "histórico"}:
         goal = get_selected_goal(
@@ -167,9 +151,20 @@ def handle_goal_whatsapp_message(
         current_time=current_time,
     )
     if conversational_selection is not None:
-        goal, alternatives, selection_was_explicit = conversational_selection
+        goal, alternatives, selection_was_explicit, pending_action = (
+            conversational_selection
+        )
         if goal is None:
             if alternatives:
+                begin_goal_selection(
+                    db,
+                    user_id=user.id,
+                    goal_ids=[item.id for item in alternatives],
+                    current_time=current_time,
+                    action=pending_action,
+                    original_message=text,
+                    source=source,
+                )
                 names = " ou ".join(f'"{item.name}"' for item in alternatives)
                 return True, f"Você quis dizer {names}?"
             if selection_was_explicit:
@@ -181,6 +176,8 @@ def handle_goal_whatsapp_message(
             goal=goal,
             current_time=current_time,
         )
+        if pending_action != "select":
+            return True, _goal_action_response(pending_action, goal)
         return True, (
             f'✅ Meta "{goal.name}" selecionada.\n'
             f"{_goal_progress_response(goal)}"
@@ -310,6 +307,7 @@ def _goals_list_response(
     *,
     user_id: int,
     current_time: datetime,
+    source: str,
 ) -> str:
     goals = list_goals(db, user_id=user_id)
     if not goals:
@@ -321,6 +319,7 @@ def _goals_list_response(
         user_id=user_id,
         goal_ids=[goal.id for goal in displayed_goals],
         current_time=current_time,
+        source=source,
     )
     lines = ["🎯 Suas metas:"]
     for position, goal in enumerate(displayed_goals, start=1):
@@ -358,6 +357,93 @@ def _goal_history_response(db: Session, *, user_id: int, goal: Goal) -> str:
     return "\n".join(lines)
 
 
+def _goal_query_action(normalized: str) -> str | None:
+    if normalized.startswith("quanto falta"):
+        return "missing"
+    if (
+        normalized.startswith("progresso")
+        or re.match(r"^como esta (?:minha|a) meta\b", normalized)
+        or normalized.startswith("quanto tenho guardado")
+    ):
+        return "progress"
+    return None
+
+
+def _goal_query_response(
+    db: Session,
+    *,
+    user_id: int,
+    text: str,
+    source: str,
+    current_time: datetime,
+    action: str,
+) -> str:
+    normalized = _normalize(text)
+    explicit_name = _explicit_goal_name(normalized)
+    if explicit_name:
+        goals = list_goals(db, user_id=user_id)
+        if not goals:
+            return 'Você ainda não tem metas. Envie "criar meta Viagem 3000".'
+        goal, alternatives, possible_match = _resolve_goal_name(
+            goals,
+            explicit_name,
+        )
+        if goal is not None:
+            select_goal_context(
+                db,
+                user_id=user_id,
+                goal=goal,
+                current_time=current_time,
+            )
+            return _goal_action_response(action, goal)
+        if alternatives or possible_match:
+            candidates = alternatives or goals
+            begin_goal_selection(
+                db,
+                user_id=user_id,
+                goal_ids=[item.id for item in candidates],
+                current_time=current_time,
+                action=action,
+                original_message=text,
+                source=source,
+            )
+            names = " ou ".join(item.name for item in candidates[:2])
+            return f"Qual meta você quer consultar: {names}?"
+        return f'Não encontrei a meta "{explicit_name}". Qual meta você quer consultar?'
+
+    goal = get_selected_goal(
+        db,
+        user_id=user_id,
+        current_time=current_time,
+    )
+    if goal is None:
+        return _select_goal_prompt()
+    return _goal_action_response(action, goal)
+
+
+def _goal_action_response(action: str, goal: Goal) -> str:
+    if action == "missing":
+        return (
+            f'Para a meta "{goal.name}", faltam '
+            f"{format_brl(_missing(goal))}."
+        )
+    return _goal_progress_response(goal)
+
+
+def _explicit_goal_name(normalized: str) -> str | None:
+    patterns = (
+        r"^quanto falta (?:para|pra) minha meta(?: de)?\s+(.+)$",
+        r"^quanto falta (?:pro|pra|para o|para a)\s+(.+)$",
+        r"^como esta (?:minha|a) meta(?: de)?\s+(.+)$",
+        r"^quanto tenho guardado (?:na meta(?: de)?|no|na)\s+(.+)$",
+    )
+    for pattern in patterns:
+        match = re.match(pattern, normalized)
+        if match is not None:
+            return match.group(1).strip()
+    return None
+
+
 def _goal_from_command_or_context(
     db: Session,
     *,
@@ -370,7 +456,7 @@ def _goal_from_command_or_context(
     padded = f" {normalized} "
     if marker in padded:
         name = padded.split(marker, 1)[1].strip(" ?!.,")
-        name = re.sub(r"^(?:a|na|da|para)\s+", "", name)
+        name = re.sub(r"^(?:a|na|da|de|para)\s+", "", name)
         if name:
             goal = _find_goal_by_name(db, user_id=user_id, name=name)
             if goal is not None:
@@ -381,7 +467,7 @@ def _goal_from_command_or_context(
                     current_time=current_time,
                 )
                 return goal
-    named_target = re.search(r"\b(?:no|na)\s+(.+)$", normalized)
+    named_target = re.search(r"\b(?:no|na|pro|pra|para o|para a)\s+(.+)$", normalized)
     if named_target is not None:
         requested_name = re.sub(r"^meta\s+", "", named_target.group(1)).strip()
         goal = _find_goal_by_name(db, user_id=user_id, name=requested_name)
@@ -408,11 +494,8 @@ def _find_goal_by_name(
 ) -> Goal | None:
     requested = _normalize(name)
     goals = list(db.scalars(select(Goal).where(Goal.user_id == user_id)))
-    exact = [goal for goal in goals if _normalize(goal.name) == requested]
-    if exact:
-        return exact[0]
-    partial = [goal for goal in goals if requested in _normalize(goal.name)]
-    return partial[0] if len(partial) == 1 else None
+    goal, _, _ = _resolve_goal_name(goals, requested)
+    return goal
 
 
 def _conversational_goal_selection(
@@ -421,13 +504,13 @@ def _conversational_goal_selection(
     user_id: int,
     text: str,
     current_time: datetime,
-) -> tuple[Goal | None, list[Goal], bool] | None:
-    goal_ids = get_pending_goal_selection(
+) -> tuple[Goal | None, list[Goal], bool, str] | None:
+    pending = get_pending_goal_selection(
         db,
         user_id=user_id,
         current_time=current_time,
     )
-    if goal_ids is None:
+    if pending is None:
         selected_goal = get_selected_goal(
             db,
             user_id=user_id,
@@ -436,44 +519,50 @@ def _conversational_goal_selection(
         if selected_goal is None:
             return None
         goals = list_goals(db, user_id=user_id)
+        pending_action = "select"
     else:
         goals_by_id = {
             goal.id: goal
             for goal in db.scalars(
                 select(Goal).where(
                     Goal.user_id == user_id,
-                    Goal.id.in_(goal_ids),
+                    Goal.id.in_(pending.goal_ids),
                 )
             )
         }
         goals = [
             goals_by_id[goal_id]
-            for goal_id in goal_ids
+            for goal_id in pending.goal_ids
             if goal_id in goals_by_id
         ]
+        pending_action = pending.action
 
     if not goals:
         clear_pending_goal_selection(db, user_id=user_id)
         return None
 
     normalized = _normalize(text)
+    if normalized in {"essa", "isso"} and len(goals) == 1:
+        return goals[0], [], True, pending_action
     ordinal_index = _selection_ordinal_index(normalized)
     if ordinal_index is not None:
         return (
             goals[ordinal_index] if ordinal_index < len(goals) else None,
             [],
             True,
+            pending_action,
         )
 
     selection_name, selection_was_explicit = _natural_selection_name(normalized)
     goal, alternatives, possible_match = _resolve_goal_name(
         goals,
-        selection_name,
+        re.sub(r"^(?:do|da|de)\s+", "", selection_name),
     )
     return (
         goal,
         alternatives,
         selection_was_explicit or possible_match,
+        pending_action,
     )
 
 
@@ -501,7 +590,7 @@ def _resolve_goal_name(
     selection_name: str,
 ) -> tuple[Goal | None, list[Goal], bool]:
     requested = _normalize(selection_name)
-    if not requested:
+    if not requested or not goals:
         return None, [], True
 
     exact = [goal for goal in goals if _normalize(goal.name) == requested]

@@ -24,15 +24,18 @@ from backend.services.attachment_service import (
     stage_attachment_file,
     validate_attachment,
 )
-from backend.services.category_service import find_existing_category
+from backend.services.category_service import (
+    find_existing_category,
+    find_matching_existing_category,
+)
 from backend.services.conversation_service import (
     image_error_response,
     image_processing_response,
     image_too_large_response,
     image_unsupported_response,
-    pending_receipt_amount_updated_response,
     pending_receipt_discarded_response,
     pending_receipt_expired_response,
+    pending_receipt_updated_response,
     receipt_direction_confirmation,
     receipt_identification_confirmation,
     receipt_not_registered_response,
@@ -53,8 +56,9 @@ from backend.services.pending_receipt_service import (
     get_pending_receipt_source,
     pending_receipt_is_expired,
     receipt_extraction_from_pending,
-    update_pending_receipt_amount,
+    update_pending_receipt_fields,
 )
+from backend.services.natural_period_service import resolve_natural_period
 from backend.services.statement_document_service import (
     StatementDocumentError,
     extract_statement_document,
@@ -278,10 +282,6 @@ def handle_pending_receipt_reply(
     current_date: date,
     current_time: datetime,
 ) -> PendingReplyResult:
-    reply_type, corrected_amount = _classify_pending_reply(text)
-    if reply_type is None:
-        return PendingReplyResult(handled=False)
-
     pending = get_latest_pending_receipt_for_user(db, user_id=user.id)
     if pending is None:
         return PendingReplyResult(handled=False)
@@ -293,6 +293,55 @@ def handle_pending_receipt_reply(
             response=pending_receipt_expired_response(),
         )
 
+    extraction = receipt_extraction_from_pending(pending)
+    changes, correction_error = _pending_receipt_correction(
+        db,
+        user_id=user.id,
+        text=text,
+        current_date=current_date,
+        extraction=extraction,
+    )
+    if correction_error is not None:
+        return PendingReplyResult(handled=True, response=correction_error)
+    if changes:
+        update_pending_receipt_fields(
+            db,
+            pending=pending,
+            user_id=user.id,
+            changes=changes,
+        )
+        extraction = receipt_extraction_from_pending(pending)
+        validated = _validate_receipt_for_confirmation(
+            extraction,
+            current_date=current_date,
+        )
+        if validated is None:
+            return PendingReplyResult(
+                handled=True,
+                response="Não consegui aplicar essa correção. Pode informar novamente?",
+            )
+        transaction_type = (
+            "income" if extraction.direction == "inflow" else "expense"
+        )
+        description, _ = _receipt_description_and_counterparty(
+            extraction,
+            transaction_type=transaction_type,
+        )
+        return PendingReplyResult(
+            handled=True,
+            response=pending_receipt_updated_response(
+                amount=validated.amount,
+                description=description,
+                transaction_date=validated.transaction_date,
+                direction=extraction.direction,
+                category=extraction.category_suggestion or "Sem categoria",
+            ),
+        )
+
+    reply_type, _ = _classify_pending_reply(text)
+    if reply_type is None:
+        return PendingReplyResult(handled=False)
+
     if reply_type == "discard":
         delete_pending_receipt(db, pending=pending, user_id=user.id)
         return PendingReplyResult(
@@ -300,19 +349,6 @@ def handle_pending_receipt_reply(
             response=pending_receipt_discarded_response(),
         )
 
-    if reply_type == "amount" and corrected_amount is not None:
-        update_pending_receipt_amount(
-            db,
-            pending=pending,
-            user_id=user.id,
-            amount=f"{corrected_amount:.2f}",
-        )
-        return PendingReplyResult(
-            handled=True,
-            response=pending_receipt_amount_updated_response(corrected_amount),
-        )
-
-    extraction = receipt_extraction_from_pending(pending)
     if reply_type == "confirm" and extraction.direction == "unknown":
         amount = _parse_decimal_amount(extraction.amount)
         if amount is None:
@@ -664,6 +700,151 @@ def _receipt_payment_method(document_type: str) -> str | None:
     return None
 
 
+def _pending_receipt_correction(
+    db: Session,
+    *,
+    user_id: int,
+    text: str,
+    current_date: date,
+    extraction: ReceiptExtraction,
+) -> tuple[dict[str, object], str | None]:
+    normalized = _normalize_text(text)
+    changes: dict[str, object] = {}
+
+    direction = _corrected_receipt_direction(normalized)
+    if direction is not None:
+        changes["direction"] = direction
+
+    date_requested = bool(
+        re.search(r"\bdata\b", normalized)
+        or re.fullmatch(r"(?:foi\s+)?(?:hoje|ontem|anteontem)", normalized)
+    )
+    if date_requested:
+        period = resolve_natural_period(text, current_date=current_date)
+        if (
+            not period.is_valid
+            or period.start_date is None
+            or period.start_date != period.end_date
+            or period.start_date > current_date
+        ):
+            return {}, "Não consegui entender essa data. Pode informar novamente?"
+        changes["transaction_date"] = period.start_date.isoformat()
+
+    amount_match = _corrected_receipt_amount(text, normalized)
+    if amount_match is not None:
+        changes["amount"] = f"{amount_match:.2f}"
+
+    description = _corrected_receipt_description(text)
+    if description is not None:
+        safe_description = _safe_receipt_text(description, max_length=255)
+        if safe_description is None:
+            return {}, "Qual descrição válida você quer usar no comprovante?"
+        changes["description"] = safe_description
+
+    category_requested, category_name = _corrected_receipt_category(text)
+    if category_requested:
+        if _normalize_text(category_name or "") in {
+            "sem categoria",
+            "nenhuma categoria",
+        }:
+            changes["category_suggestion"] = None
+        else:
+            requested_type = (
+                "income"
+                if changes.get("direction", extraction.direction) == "inflow"
+                else "expense"
+            )
+            category = find_matching_existing_category(
+                db,
+                user_id=user_id,
+                category_name=category_name or "",
+                transaction_type=requested_type,
+            )
+            if category is None:
+                return (
+                    {},
+                    "Não encontrei essa categoria. Informe outra categoria válida "
+                    "ou diga *sem categoria*.",
+                )
+            changes["category_suggestion"] = category.name
+
+    return changes, None
+
+
+def _corrected_receipt_direction(normalized: str) -> ReceiptDirection | None:
+    prefix = r"(?:isso|esse|comprovante|na verdade)\s+(?:e|foi)\s+"
+    if normalized in {"entrada", "receita", "recebimento"} or re.search(
+        rf"\b(?:{prefix}|tipo\s+)(?:uma\s+)?(?:entrada|receita|recebimento)\b",
+        normalized,
+    ):
+        return "inflow"
+    if normalized in {"saida", "despesa", "gasto"} or re.search(
+        rf"\b(?:{prefix}|tipo\s+)(?:uma\s+)?(?:saida|despesa|gasto)\b",
+        normalized,
+    ):
+        return "outflow"
+    return None
+
+
+def _corrected_receipt_amount(text: str, normalized: str) -> Decimal | None:
+    if re.search(r"\b(?:data|dia)\b", normalized):
+        return None
+    patterns = (
+        r"\b(?:o\s+)?valor\b[^0-9]{0,30}"
+        r"(?:r\$\s*)?(\d{1,12}(?:[.,]\d{1,2})?)",
+        r"\bera\s+(?:r\$\s*)?(\d{1,12}(?:[.,]\d{1,2})?)\s*reais?\b",
+        r"\b(?:na\s+verdade|corrige(?:\s+o\s+valor)?(?:\s+para)?)\s+"
+        r"(?:e|é)?\s*(?:r\$\s*)?(\d{1,12}(?:[.,]\d{1,2})?)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match is not None:
+            return _parse_decimal_amount(match.group(1))
+    return None
+
+
+def _corrected_receipt_description(text: str) -> str | None:
+    patterns = (
+        r"\b(?:a\s+)?descri[cç][aã]o\s+(?:e|é|era|foi|para)?\s+(.+)$",
+        r"\bcoloca\s+(.+?)\s+na\s+descri[cç][aã]o\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match is not None:
+            return _trim_receipt_correction_value(match.group(1))
+    return None
+
+
+def _corrected_receipt_category(text: str) -> tuple[bool, str | None]:
+    patterns = (
+        r"\bmuda\s+a\s+categoria\s+para\s+(.+)$",
+        r"\b(?:esse|isso)\s+e\s+da\s+categoria\s+(.+)$",
+        r"\bcategoria\s+(?:e|é|era|para)?\s*(.+)$",
+        r"\bcoloca\s+em\s+(.+)$",
+    )
+    normalized_text = unicodedata.normalize("NFKD", text)
+    normalized_text = "".join(
+        character
+        for character in normalized_text
+        if not unicodedata.combining(character)
+    )
+    for pattern in patterns:
+        match = re.search(pattern, normalized_text, flags=re.IGNORECASE)
+        if match is not None:
+            return True, _trim_receipt_correction_value(match.group(1))
+    return False, None
+
+
+def _trim_receipt_correction_value(value: str) -> str:
+    cleaned = re.split(
+        r"\s+(?:no|do|o)\s+comprovante\b|\s+arrum[ae]\b|\s+pra\s+mim\b",
+        value,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    return " ".join(cleaned.strip(" .,!?:;-").split())
+
+
 def _classify_pending_reply(text: str) -> tuple[str | None, Decimal | None]:
     normalized = _normalize_text(text)
     if normalized in {"sim", "isso", "isso mesmo", "correto", "confirmo"}:
@@ -675,13 +856,6 @@ def _classify_pending_reply(text: str) -> tuple[str | None, Decimal | None]:
     if normalized in {"nao", "ignora", "deixa", "deixa pra la"}:
         return "discard", None
 
-    correction_markers = ("na verdade", "era", "valor", "corrige")
-    if any(marker in normalized for marker in correction_markers):
-        match = re.search(r"\d{1,12}(?:[.,]\d{1,2})?", text)
-        if match:
-            amount = _parse_decimal_amount(match.group(0))
-            if amount is not None:
-                return "amount", amount
     return None, None
 
 
